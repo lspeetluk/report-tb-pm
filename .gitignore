@@ -1,0 +1,13 @@
+# Ignore all files that are html 
+*.html
+
+# Ignore cache, images, and tables
+/cache/*
+/images/*
+/tables/*
+
+# Ignore secondary outcomes 
+/report_tb_pm_secondary_outcomes.Rmd
+
+# Ignore setup
+/report_tb_pm_setup.Rmd

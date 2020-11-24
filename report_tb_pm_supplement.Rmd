@@ -1,0 +1,650 @@
+
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE}
+
+# Required packages
+library(Hmisc)
+library(kableExtra)
+library(tidyverse)
+library(here)
+library(skimr)
+library(gmodels)
+library(gtsummary)
+library(rpart)
+library(mice)
+library(rms)
+library(glmnet)
+library(cowplot)
+library(hrbrthemes)
+library(pROC)
+library(ResourceSelection)
+
+
+# Ser global markdown options
+options(prType='plain')
+options(digits=3)
+knitrSet(lang='markdown', h=6, w=6)
+
+knitr::opts_chunk$set(
+  fig.path = "images/", 
+  cache.path = 'cache/images-',
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+# Set global gtsmmary options
+options(gtsummary.as_gt.addl_cmds = "gt::tab_options(table.font.size = 'small', data_row.padding = gt::px(1))")
+
+# Load dataset
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata") # original dataset with misssing
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata") # mi_sum dataset based on summarized imputation
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata") # mi_long dataset based on summarized imputation
+
+```
+
+`r hidingTOC(buttonLabel="Outline", levels=2)`
+
+```{r}
+# Load functions
+source(here("Manuscript", "manuscript_functions.R"))
+
+# ----- SETUP -----
+
+# Seed for all analyses
+SEED = 1408
+
+# Save outcome vector 
+outcome_vector <- mi_sum$unsuccessful
+```
+
+
+# RCS for Age
+
+
+```{r}
+# Model variables with outcome variable first
+model_vars <- Cs(unsuccessful, hiv, diabetes_yn, lab_hgb, evertb, xray_cavit, smear_pos, rcs(age,4), female, bmi, dishx_any_minus, educ_years, alcoholhx, drughx, smokhx, non_white)
+
+length_model_vars <- length(model_vars)
+
+# Model formula 
+model_formula <- as.formula(paste0("unsuccessful ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+```
+
+
+## Model selection
+
+```{r, cache=TRUE}
+set.seed(SEED)
+seed=SEED
+
+# Approximate model 
+approx_full_formula <- as.formula(paste0("predvals_full_model ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+
+# Set data distribution
+dd <- suppressWarnings(datadist(mi_sum))
+options(datadist="dd")
+
+save_results_all <- model_development(data=mi_sum, 
+                                  outcome=mi_sum$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=500, 
+                                  seed=SEED)
+```
+
+
+```{r}
+save_results_all$raw_overview
+```
+
+
+## Model comparison
+
+### Model coefficients
+```{r}
+save_results_all$coefficients_table
+```
+
+
+### Model performance
+```{r}
+save_results_all$models_performance
+```
+
+
+## Boot50 model 
+
+### C-statistics
+```{r}
+save_results_all$c_statistics
+```
+
+
+Other model performace measures
+
+```{r}
+boot_form <- as.formula(unsuccessful ~ lab_hgb + hiv + drughx + diabetes_yn + rcs(age,4) + +educ_years + smokhx + female + bmi + smear_pos + 
+    non_white)
+
+boot_model <- lrm(boot_form, data = mi_sum, x = T, y = T)
+
+boot_val <- validate(boot_model, B=200, seed=SEED)
+
+boot_val
+```
+
+
+### Calibration Plot
+```{r}
+save_results_all$boot50_calibration
+```
+
+
+The calibration curve from Frank Harrell's package is: 
+```{r}
+# Calibration curve
+plot(calibrate(save_results_all$boot_model, B=200), xlab="Predicted Probability")
+```
+
+
+### ROC curve
+```{r}
+roc <- save_results_all$roc_shrink
+
+plot(roc)
+plot(ci.thresholds(roc), type="shape", col="lightblue")
+plot(roc, add=TRUE)
+```
+
+
+
+```{r}
+# ---- Save to Excel ---
+overview <- save_results_all$raw_overview
+coefficients <- save_results_all$coefficients_table
+performance <- save_results_all$models_performance
+
+library(openxlsx)
+
+# Create a blank workbook
+results <- createWorkbook()
+
+# Add some sheets to the workbook
+addWorksheet(results, "Model-Selection")
+addWorksheet(results, "Coefficients")
+addWorksheet(results, "Performance")
+
+# Write the data to the sheets
+writeData(results, sheet = "Model-Selection", x = overview)
+writeData(results, sheet = "Coefficients", x = coefficients)
+writeData(results, sheet = "Performance", x = performance)
+
+# Export the file
+saveWorkbook(results, here("Manuscript", "tables", "sensitivity_analyses_results.xlsx"), overwrite=TRUE)
+```
+
+
+
+# CC and Imputataion  
+
+```{r}
+# Create age groups (original data with missing)
+data <- data %>% 
+  mutate(age_group = fct_case_when(
+    age < 25 ~ "<25",
+    age >= 25 & age <35 ~ "25-35",
+    age >=35 & age <45 ~ "35-45",
+    age >=45 & age <55 ~ "45-55",
+    age >= 55 ~ "55+"
+  ))
+
+
+# Create age groups (mi_long)
+mi_long <- mi_long %>% 
+  mutate(age_group = fct_case_when(
+    age < 25 ~ "<25",
+    age >= 25 & age <35 ~ "25-35",
+    age >=35 & age <45 ~ "35-45",
+    age >=45 & age <55 ~ "45-55",
+    age >= 55 ~ "55+"
+  ))
+```
+
+
+
+```{r}
+# Model variables with outcome variable first (original model vars with age_group)
+model_vars <- Cs(unsuccessful, hiv, diabetes_yn, lab_hgb, evertb, xray_cavit, smear_pos, age_group, female, bmi, dishx_any_minus, educ_years, alcoholhx, drughx, smokhx, non_white)
+
+length_model_vars <- length(model_vars)
+
+# Model formula 
+model_formula <- as.formula(paste0("unsuccessful ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+
+# Approximated model formula (predicting predicted values)
+approx_full_formula <- as.formula(paste0("predvals_full_model ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+
+# Seed for all analyses
+SEED = 5643
+```
+
+
+Repeat all model development steps within complete case and each imputed dataset
+
+## Complete case
+
+```{r, cache=TRUE}
+complete_case <- mi_long %>%  filter(.imp==1 & complete_case==1)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(complete_case))
+options(datadist="dd")
+
+save_results_complete_case <- model_development(data=complete_case, 
+                                  outcome=complete_case$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+## Imputatation 1 
+
+
+```{r, cache=TRUE}
+imputation1 <- mi_long %>%  filter(.imp==1)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation1))
+options(datadist="dd")
+
+save_results_imputation1 <- model_development(data=imputation1, 
+                                  outcome=imputation1$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+
+## Imputatation 2
+
+
+```{r, cache=TRUE}
+imputation2 <- mi_long %>%  filter(.imp==2)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation2))
+options(datadist="dd")
+
+save_results_imputation2 <- model_development(data=imputation2, 
+                                  outcome=imputation2$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+
+```
+
+
+## Imputatation 3
+
+
+```{r, cache=TRUE}
+imputation3 <- mi_long %>%  filter(.imp==3)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation3))
+options(datadist="dd")
+
+save_results_imputation3 <- model_development(data=imputation3, 
+                                  outcome=imputation3$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+
+## Imputatation 4
+
+
+```{r, cache=TRUE}
+imputation4 <- mi_long %>%  filter(.imp==4)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation4))
+options(datadist="dd")
+
+save_results_imputation4 <- model_development(data=imputation4, 
+                                  outcome=imputation4$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+
+```
+
+
+## Imputatation 5
+
+
+```{r, cache=TRUE}
+imputation5 <- mi_long %>%  filter(.imp==5)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation5))
+options(datadist="dd")
+
+save_results_imputation5 <- model_development(data=imputation5, 
+                                  outcome=imputation5$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+
+## Imputatation 6
+
+
+```{r, cache=TRUE}
+imputation6 <- mi_long %>%  filter(.imp==6)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation6))
+options(datadist="dd")
+
+save_results_imputation6 <- model_development(data=imputation6, 
+                                  outcome=imputation6$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+
+```
+
+
+## Imputatation 7
+
+
+```{r, cache=TRUE}
+imputation7 <- mi_long %>%  filter(.imp==7)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation7))
+options(datadist="dd")
+
+save_results_imputation7 <- model_development(data=imputation7, 
+                                  outcome=imputation7$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+
+```
+
+
+## Imputatation 8
+
+
+```{r, cache=TRUE}
+imputation8 <- mi_long %>%  filter(.imp==8)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation8))
+options(datadist="dd")
+
+save_results_imputation8 <- model_development(data=imputation8, 
+                                  outcome=imputation8$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+
+```
+
+
+## Imputatation 9
+
+
+```{r, cache=TRUE}
+imputation9 <- mi_long %>%  filter(.imp==9)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation9))
+options(datadist="dd")
+
+save_results_imputation9 <- model_development(data=imputation9, 
+                                  outcome=imputation9$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+
+## Imputatation 10
+
+
+```{r, cache=TRUE}
+imputation10 <- mi_long %>% filter(.imp==10)
+                                   
+# Set data distribution
+dd <- suppressWarnings(datadist(imputation10))
+options(datadist="dd")
+
+save_results_imputation10 <- model_development(data=imputation10, 
+                                  outcome=imputation10$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=200, 
+                                  seed=SEED)
+```
+
+
+## Comparison
+
+```{r}
+results <- list(
+  complete_case = save_results_complete_case,
+  imputation1 = save_results_imputation1,
+  imputation2 = save_results_imputation2, 
+  imputation3 = save_results_imputation3, 
+  imputation4 = save_results_imputation4, 
+  imputation5 = save_results_imputation5, 
+  imputation6 = save_results_imputation6, 
+  imputation7 = save_results_imputation7, 
+  imputation8 = save_results_imputation8, 
+  imputation9 = save_results_imputation9, 
+  imputation10 = save_results_imputation10
+     )
+
+col_names <- Cs(variable, complete_case, imputation1, imputation2, imputation3, imputation4, imputation5, imputation6, imputation7, imputation8, imputation9, imputation10)
+
+# Full model variables and coefficients 
+full_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, full_model)])  %>%  reduce(left_join, by = "variable")
+colnames(full_models) <- col_names
+
+# Selected model variables and coefficients 
+selected_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, selected_model)])  %>%  reduce(left_join, by = "variable")
+colnames(selected_models) <- col_names
+
+# Boot medians 
+boot_medians <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_boot_median)])  %>%  reduce(left_join, by = "variable")
+colnames(boot_medians) <- col_names
+
+# Boot50 model variables and coefficients  
+boot50_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_boot50_model)])  %>%  reduce(left_join, by = "variable")
+colnames(boot50_models) <- col_names
+
+# Shrunken coefficients (from boot50 model) 
+shrink_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_shrink)]) %>%  reduce(left_join, by = "variable")
+colnames(shrink_models) <- col_names
+```
+
+
+### AUC from full and boot50 models
+
+```{r}
+# AUCs
+auc_full <- lapply(results, function(x) x$c_statistics[Cs(full_model, boot50_model)]) 
+auc_full                                 
+```
+
+
+### ROC curves 
+```{r}
+plot(save_results_complete_case$roc_shrink)
+plot(save_results_imputation1$roc_shrink, add=TRUE, col=3, lty=2)
+plot(save_results_imputation2$roc_shrink, add=TRUE, col=4, lty=2)
+plot(save_results_imputation3$roc_shrink, add=TRUE, col=5, lty=2)
+plot(save_results_imputation4$roc_shrink, add=TRUE, col=6, lty=2)
+plot(save_results_imputation5$roc_shrink, add=TRUE, col=7, lty=2)
+plot(save_results_imputation6$roc_shrink, add=TRUE, col=8, lty=2)
+plot(save_results_imputation7$roc_shrink, add=TRUE, col=9, lty=2)
+plot(save_results_imputation8$roc_shrink, add=TRUE, col=10, lty=2)
+plot(save_results_imputation9$roc_shrink, add=TRUE, col=11, lty=2)
+plot(save_results_imputation10$roc_shrink, add=TRUE, col=12, lty=2)
+```
+
+
+### Coefficients
+
+#### Full models
+
+```{r}
+full_models
+```
+
+#### Boot 50 models
+
+```{r}
+boot50_models
+```
+
+#### Selected models
+
+```{r}
+selected_models
+```
+
+#### Shrunken coefficients 
+
+```{r}
+shrink_models
+```
+
+
+```{r}
+library(openxlsx)
+
+# Create a blank workbook
+imputation_results <- createWorkbook()
+
+# Add some sheets to the workbook
+addWorksheet(imputation_results, "Full model coefficients")
+addWorksheet(imputation_results, "Selected coefficients")
+addWorksheet(imputation_results, "Bootstrap coefficients")
+addWorksheet(imputation_results, "Boot50 model coefficients")
+addWorksheet(imputation_results, "Boot50-shrink coefficients")
+
+# Write the data to the sheets
+writeData(imputation_results, sheet = "Full model coefficients", x = full_models)
+writeData(imputation_results, sheet = "Selected coefficients", x = selected_models)
+writeData(imputation_results, sheet = "Bootstrap coefficients", x = boot_medians)
+writeData(imputation_results, sheet = "Boot50 model coefficients", x = boot50_models)
+writeData(imputation_results, sheet = "Boot50-shrink coefficients", x = shrink_models)
+
+# Export the file
+saveWorkbook(imputation_results, here("Manuscript", "tables", "imputation_results.xlsx"), overwrite=TRUE)
+```
+
+# External validation
+
+External validation of Costa-Veiga model
+
+` x = exp[log(0.72)*(age 25-44) + log(1.39)*(age 45-64) + log(4.37)*(age >= 65) + log(4.93)*(HIV) + log(2.09)*(other disease comorbidities) + log(2.29)*(IV drug use) + log(1.44)*(retreatment case)] `
+
+```{r}
+cv <- mi_sum %>% 
+  mutate(
+    age_group = case_when(
+      age <25 & age>15 ~ "15-24",
+      age <45 & age>=25 ~ "25-44",
+      age <65 & age>=45 ~ "45-64",
+      age >=65 ~ "65+",
+      TRUE ~ NA_character_),
+    diabetes = diabetes_yn,
+    current_drug_use = ifelse(drughx == "Current", 1, 0),
+    comorbidity = dishx_any_minus)
+
+analysis <- cv %>% 
+  mutate(lp = 
+           log(0.72)*(age_group=="25-44") +
+           log(1.39)*(age_group=="45-64") + 
+           log(4.37)*(age_group=="65+") + 
+           log(4.93)*(hiv==1) + 
+           log(2.09)*(comorbidity==1) + 
+           log(2.29)*(current_drug_use==1) + 
+           log(1.44)*(evertb==1),
+         prob_outcome = 1/(1+exp(-lp)))
+  
+```
+
+
+## Original model
+
+```{r}
+# Use linear predictor as offset term (no slope or intercept updating)
+ev_glm(method="original", lp="lp", outcome="unsuccessful", data=analysis, samples=200, return="performance")
+```
+
+
+## Update intercept
+
+```{r}
+# Update intercept
+ev_glm(method="update intercept", lp="lp", outcome="unsuccessful", data=analysis, samples=200, return="performance")
+```
+
+
+## Model recalibration 
+
+```{r}
+# Update slope and intercept 
+
+# With GLM
+ev_glm(method="model recalibration", lp="lp", outcome="unsuccessful", data=analysis, samples=200, return="model")
+ev_glm(method="model recalibration", lp="lp", outcome="unsuccessful", data=analysis, samples=200, return="performance")
+ev_glm(method="model recalibration", lp="lp", outcome="unsuccessful", data=analysis, samples=200, return="cal_plot")
+
+
+# With LRM 
+ev_lrm(method="model recalibration", lp="lp", outcome="unsuccessful", data=analysis, samples=200, boots=50, return="c_stat")
+```
+
+
+## Model revision
+
+```{r}
+# Re-fit with predictors
+formula <- as.formula(unsuccessful ~ female + age_group + hiv + comorbidity + current_drug_use + evertb)
+
+# With GLM
+ev_glm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=200, return="model")
+ev_glm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=200,return="performance")
+ev_glm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=1, return="cal_plot")
+roc <- ev_glm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=200, return="roc")
+
+roc 
+plot(roc)
+
+# With LRM 
+ev_lrm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=200, boots=50, return="c_stat")
+ev_lrm(method="model revision", lp="lp", outcome="unsuccessful", formula=formula, data=analysis, samples=200, boots=1, return="cal_plot")
+```
+
+

@@ -1,0 +1,1476 @@
+---
+title: "RePORT TB Prediction Model Development"
+author: "Lauren Peetluk"
+date: "`r Sys.Date()`"
+output:
+   
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    number_section: false
+    toc_float:
+      collapsed: true
+    theme: simplex
+    code_folding: hide
+  pdf_document:
+    keep_tex: true
+---
+
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE}
+
+# Required packages
+library(Hmisc)
+library(kableExtra)
+library(tidyverse)
+library(here)
+library(skimr)
+library(gmodels)
+library(gtsummary)
+library(rpart)
+library(mice)
+library(rms)
+library(glmnet)
+library(cowplot)
+library(hrbrthemes)
+library(pROC)
+library(ResourceSelection)
+
+
+# Ser global markdown options
+options(prType='plain')
+options(digits=3)
+knitrSet(lang='markdown', h=6, w=6)
+
+knitr::opts_chunk$set(
+  fig.path = "images/", 
+  cache.path = 'cache/images-',
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+# Set global gtsmmary options
+options(gtsummary.as_gt.addl_cmds = "gt::tab_options(table.font.size = 'small', data_row.padding = gt::px(1))")
+
+# Load dataset
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata")
+```
+
+`r hidingTOC(buttonLabel="Outline", levels=2)`
+
+# Functions 
+
+```{r}
+# Load functions
+source(here("Manuscript", "manuscript_functions.R"))
+```
+
+
+# Overview
+
+## Cohort characteristics
+
+```{r}
+data %>% 
+  select(age, female, non_white, educ_years, bmi, evertb, xray_cavit, smear_pos, diabetes_yn, hiv, lab_hgb, dishx_any_minus, alcoholhx, drughx, smokhx) %>% 
+  tbl_summary(missing="no") %>% 
+  add_n() %>% 
+  bold_labels()
+```
+
+**HIV-related characteristics**
+```{r}
+data %>% 
+  filter(hiv==1) %>% 
+  select(art_experienced, cd4_count, cd4_lt200_all, viral_load, vl_gt200_all) %>% 
+  tbl_summary(missing="no") %>% 
+  add_n() %>% 
+  bold_labels()
+```
+
+
+## Treatment outcomes 
+
+```{r}
+data %>% 
+  select(outcome_cat, unsuccessful, tto_outcome) %>% 
+  tbl_summary(by=unsuccessful) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+  add_overall(last=TRUE)
+```
+
+**Timing of outcomes**
+
+Time to outcome is defined as the time between treatment initiation and event. If participants abandoned treatment or were lost to follow-up, their duration of follow-up is calculated as the midpoint of their last attended and first missed visits. 
+
+```{r}
+data %>% 
+  select(outcome_cat, tto_outcome) %>% 
+    tbl_summary(by=outcome_cat, missing="no") %>% 
+    add_n() %>% 
+    bold_labels()
+```
+
+
+# Missing data
+
+```{r}
+# Model variables
+model_vars <- Cs(unsuccessful, hiv, diabetes_yn, lab_hgb, evertb, xray_cavit, smear_pos, age, female, bmi, dishx_any_minus, educ_years, alcoholhx, drughx, smokhx, non_white)
+```
+
+
+```{r}
+# Analysis dataset = dataset with all model variables and ID 
+analysis <- data %>% 
+  select(all_of(model_vars), subjid) 
+
+# ID for participants with at least 1 missing value
+missing_data <- analysis %>% 
+  filter_all(any_vars(is.na(.))) %>% 
+  pull(subjid) 
+
+# Dataset to match ID after imputation
+matches <- data %>% select(subjid, unsuccessful, outcome_cat, tto_outcome, tto_outcome_min, tto_outcome_max) %>% 
+ rowid_to_column("id") %>% 
+  mutate(complete_case = ifelse(subjid %in% missing_data, 0, 1))
+```
+
+## Plots
+```{r}
+# Missing data patterns
+miss_patterns <- naclus(analysis)
+
+plot(miss_patterns)
+```
+
+
+```{r , w=14 , h=14, mfrow=c(2,2), top=2}
+naplot(miss_patterns)
+```
+
+No concerning patterns of missingness
+
+
+# Redundancy analysis
+
+```{r}
+length_model_vars <- length(model_vars)
+
+redun_form <- as.formula(paste0("~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+
+redun(redun_form, r2=0.8, data=analysis, type='adjusted', nk=3, pr=FALSE)
+```
+
+The redun function allows non-monotonic transformations for each predictor to assess its ability to predict all other variables. It also shows a simple print out of the number of missing for each variable. 
+
+Even with a relaxed the $R^2$ cut off to identify redundancy to 0.8, there are no redundancies.
+
+
+## Variable clustering
+
+```{r}
+vc <- varclus(redun_form,  data=analysis, sim='hoeffding')
+
+plot(vc)
+```
+
+No variables are clustered, so I cannot narrow the variable pool this way.
+
+
+# Imputation
+
+```{r}
+# Number of complete cases 
+tab(complete.cases(analysis))
+
+# Vector the variable names with any missingn values
+vars_with_missing <- names(which(sapply(analysis, anyNA)))
+```
+
+In this dataset there are `r sum(complete.cases(analysis))` complete cases, which is `r round(mean(complete.cases(analysis))*100,digits=2)`% of the data.
+
+
+Here, I carry out imputation using the mice package
+
+```{r, cache=TRUE}
+# 10 iterations
+mi <- mice(analysis[,2:length_model_vars], m=10 , maxit=5, seed=352, printFlag = FALSE)
+```
+
+```{r}
+# Summary of imputation
+summary(mi)
+```
+
+
+## Plots
+
+The plots below show the distribution of imputed values across the imputed datasets
+
+```{r, cache=TRUE}
+densityplot(mi)
+stripplot(mi)
+```
+
+## Analysis dataset
+
+I use measures of central tendency to group by id and summarize the most mode of categorical variables and the median of continuous variables. Using this completed dataset will not account for uncertainty in the analysis, but I plan to do sensitivity analyses comparing results using imputation. 
+
+```{r}
+# Stacked dataset without original data
+mi_long <- complete(mi, "long", include=TRUE) %>% 
+  filter(.imp!=0) %>% 
+  rename(id=.id) 
+
+# Take median of numeric variables
+mi_sum_numeric <- mi_long %>%  
+  group_by(id) %>% 
+  summarise(across(where(is.numeric), ~ median(.x, na.rm = TRUE)))
+
+# Take mode of factor variables
+mi_sum_factor <- mi_long %>%
+  group_by(id) %>%
+  summarise(across(where(is.factor), ~ mode(.x))) 
+
+# Combine datasets
+mi_sum <- merge(mi_sum_factor, mi_sum_numeric, by="id") %>% 
+  select(!.imp) %>% 
+  left_join(matches, by="id") # Add outcomes and ID back
+
+mi_long <- left_join(mi_long, matches, by="id")
+```
+
+```{r}
+# Save datasets
+save(mi_sum, file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata")
+save(mi_long, file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata")
+```
+
+
+# Main analysis
+
+```{r}
+# ----- SETUP -----
+
+# Set data distribution
+dd <- datadist (mi_sum)
+options(datadist="dd")
+
+# Seed for all analyses
+SEED = 1408
+
+# Save outcome vector 
+outcome_vector <- mi_sum$unsuccessful
+```
+
+## Test for non-linearity
+
+
+```{r, mfrow=c(2,2)}
+# Model formula with restricted cubic splines 
+model_form_rcs <- as.formula(unsuccessful ~ hiv + diabetes_yn + rcs(lab_hgb,4) + evertb + xray_cavit + smear_pos + rcs(age,4) + female + rcs(bmi,4) + dishx_any_minus + rcs(educ_years,4) + alcoholhx + drughx + smokhx + non_white)
+
+rcs_model_si <- lrm(model_form_rcs, data=mi_sum, x=TRUE, y=TRUE)
+
+plot(Predict(rcs_model_si, lab_hgb))
+plot(Predict(rcs_model_si, age))
+plot(Predict(rcs_model_si, bmi))
+plot(Predict(rcs_model_si, educ_years))
+
+anova(rcs_model_si)
+```
+
+Age needs non-linear term. Main analysis will use five age groups, but sensitivity analyses will use spline to compare results. 
+
+##  Full model
+
+```{r}
+# Create age groups
+mi_sum <- mi_sum %>% 
+  mutate(age_group = fct_case_when(
+    age < 25 ~ "<25",
+    age >= 25 & age <35 ~ "25-35",
+    age >=35 & age <45 ~ "35-45",
+    age >=45 & age <55 ~ "45-55",
+    age >= 55 ~ "55+"
+  ))
+
+
+# Model variables with outcome variable first
+model_vars <- Cs(unsuccessful, hiv, diabetes_yn, lab_hgb, evertb, xray_cavit, smear_pos, age_group, female, bmi, dishx_any_minus, educ_years, alcoholhx, drughx, smokhx, non_white)
+
+# Length vector for formulas later
+length_model_vars <- length(model_vars)
+
+# Full model formula 
+model_formula <- as.formula(paste0("unsuccessful ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+```
+
+
+```{r}
+# Full model 
+full_model <- lrm(model_formula, data = mi_sum, x = T, y = T)
+
+# Save coefficients
+coef_full_model <- full_model$coefficients
+
+# Predicted values from full model
+predvals_full_model <- predict(full_model)
+
+# Validation of full model
+full_val <- validate(full_model, B=200, seed=SEED)
+```
+
+### Performance 
+
+Brier score, calibration slope, and calibration intercept of the full model
+ 
+```{r}
+perf_full_model <- save_val_results(full_val)
+perf_full_model
+```
+
+CI for apparent c-statistic 
+
+```{r}
+c_full_model <- c_ci(predvals_full_model, outcome_vector)
+c_full_model
+```
+
+### Internal validation
+
+95% CI for the c-statistic internally validated: 
+
+```{r, cache=TRUE}
+c_stat_ci(full_model, data=mi_sum, samples=2000)
+```
+
+
+**More validation measures**
+```{r}
+full_val
+```
+
+
+## Bootstrapped backwards selection 
+
+The model selection function below was adapted from code provided by Heinze et al. It first fits the full model, then fits one round of backward selection, and then uses 500 bootstrap samples (sampling with replacement) to estimate selected models and then takes the median coefficient value across those samples.
+
+Variable selection adds uncertainty to regression coefficients, which is quantified by the root mean square difference ratios. Additionally, model based uncertainty of the selected model are falsely precise and do not consider backwards selection. 
+
+RMSD ratio (RMSD of bootstrap estimates are divided by the standard error of that coefficient in the global model) quantify the uncertainty of variable selection, and expresses variance inflation or deflation caused by variable selection.
+
+The relative conditional bias estimate quantifies how much variable-selection-induced bias one would have to expect if an IV is selected, and it increases with the uncertainty of selecting each predictor. It is computed as the difference of the mean of sampled regression coefficients computed from those samples where the variable was selected and the global model regression coefficient, divided by the global model regression coefficient. relative conditional bias <10% indicates negligible bias (evidenced by the bootstrap median as close to the global coefficient)
+
+Using bootstrap medians and 95% are corrected for that uncertainty and can be interpreted as 95% CI obtained from sampling-based multi-model inference. The 2.5th and 97.5th percentiles can be interpreted as limits of 95% confidence intervals obtained by sampling-based multi-model inference.
+
+
+
+```{r, cache=TRUE}
+# Set seed
+set.seed(SEED)
+
+# Model selection function with 500 repetitions 
+main_results <- model_selection(model=model_formula, data=mi_sum, boot=500, return="all", pval_pair=0.01, seed=SEED)
+```
+
+### Main results
+
+```{r}
+main_results$overview
+```
+
+### Frequnecy table
+
+The table below shows the frequency of how often models were selected during the bootstrap sampling. The boot50 model (including variables selected in at least 50% of bootstrap samples) was selected <2% of the time. Tied for most selected model. Shows variability of resampling procedure. 
+
+```{r}
+main_results$freq_table
+```
+
+### Pairwise table
+
+The table below informs us about the variables that are often included together ("rope teams") or variables that may be substituted for one another ("competitors").
+
+- A ">" sign indicates that variables are selected together more often than would be expected by chance by multiplying their individual selection probabilities
+- A "<" sign indicates that the variables were selected together less often than would be expected by chance. 
+
+```{r}
+main_results$pair_table
+```
+
+
+```{r}
+# Save coefficients from selected model and boot50 model
+coef_selected_model <- main_results$raw_overview[,"sel_est"]
+coef_boot_median <- main_results$raw_overview[,"boot_median"]
+```
+
+
+## Boot50
+
+The main ("final") model, based on variables that were selected in at least 50% of bootstrap samples. 
+
+The c-statistic of this model is: 
+
+```{r}
+# Extract names of variables retained in boot50 model
+boot_vars_int <- names(coef_boot_median[which(coef_boot_median!=0)])
+boot_vars_int <- gsub("Former|Never|Current|25-35|35-45|45-55|55+", "", boot_vars_int)
+boot_vars_int <- unique(boot_vars_int)
+boot_vars <- boot_vars_int[-1]
+
+# Boot50 formula
+boot_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+"))))
+
+# Boot50 model
+boot_model <- lrm(boot_form, data = mi_sum, x = T, y = T)
+
+# Boot50 validation
+boot_val <- validate(boot_model, B=200, seed=SEED)
+
+# Coefficients from the model refit including only variables from the 50% or more boostraps
+coef_boot50_vars <- boot_model$coefficients
+```
+
+
+### Performance 
+
+Brier score, calibration slope, and calibration intercept of the full model:
+ 
+```{r}
+perf_boot50_model <- save_val_results(boot_val)
+perf_boot50_model
+```
+
+CI for apparent c-statistic 
+
+```{r}
+# Predicted values 
+predvals_boot50 <- predict(boot_model)
+mi_sum$predvals_boot50 <- predvals_boot50 
+
+c_boot50_model <- c_ci(predvals_boot50, outcome_vector)
+c_boot50_model
+```
+
+
+### Internal validation 
+
+```{r}
+c_stat_ci(boot_model, data=mi_sum, samples=2000)
+```
+
+
+### Calibration plot 
+
+
+The calibration curve from Frank Harrell's package is: 
+```{r}
+# Calibration curve
+plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+```
+
+
+I also wrote a code that constructs a calibration plot, but does not include bias-corrected line. 
+
+```{r}
+# My functions for calibration plot
+cal_plot_solo(mi_sum, predvals_boot50, outcome_vector)
+```
+
+**More validation measures**
+
+```{r}
+boot_val
+```
+
+
+### ROC curve
+
+```{r}
+# Predicted risk
+predrisk_boot50 <- 1/(1+exp(-predvals_boot50))
+mi_sum$predrisk_boot50 = predrisk_boot50
+
+# ROC curve
+roc <- roc(mi_sum, unsuccessful, predrisk_boot50, ci=TRUE)
+roc 
+
+plot(roc)
+plot(ci.thresholds(roc), type="shape", col="lightblue")
+plot(roc, add=TRUE)
+```
+
+**Hosmer-Lemeshow test**
+```{r}
+hoslem.test(outcome_vector, predrisk_boot50, g=20)
+```
+
+
+## Shrinkage from boot50 model 
+
+Below I use the variables from the boot50 model and model fit to estimate the heuristic shrinkage factor. 
+
+A heuristic shrinkage factor is suggested to improve predictions in new patients, and can be estimated as:
+$$\chi^2_{model} - df /    \chi^2_{model}$$  
+
+```{r}
+# Heuristic shrinkage factor 
+shrinkage_factor <- (boot_model$stats["Model L.R."] - boot_model$stats["d.f."]) / (boot_model$stats["Model L.R."])
+shrinkage_factor
+
+# Adjust coefficients from boot50 variable model by shrinkage factor
+coef_shrink_model <- coef_boot50_vars*shrinkage_factor
+
+# Predicted values and predicted from boot_model*shrinkage factor
+predvals_shrink <- predict(boot_model)*shrinkage_factor
+predrisk_shrink <- 1/(1+exp(-predvals_shrink))
+  
+mi_sum$predrisk_shrink = predrisk_shrink
+mi_sum$predvals_shrink = predvals_shrink
+```
+
+### Performance
+ 
+Brier score, calibration slope, and calibration intercept of the shrunken model:
+ 
+```{r}
+shrink_perf <- ev_glm(method="original", lp="predvals_shrink", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
+
+brier <- shrink_perf["Brier", "apparent"]
+slope <- shrink_perf["Slope", "apparent"]
+intercept <- shrink_perf["Intercept", "apparent"]
+
+perf_shrink<- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+perf_shrink
+```
+
+
+CI for apparent c-statistic 
+
+```{r}
+c_shrink <- c_ci(predvals_shrink, outcome_vector)
+c_shrink
+```
+
+
+### Calibration plot
+
+```{r}
+cal_plot_solo(mi_sum, predvals_shrink, outcome_vector)
+```
+
+
+### ROC curve
+
+
+```{r}
+plot(ev_glm(method="original", lp="predvals_shrink", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
+
+```
+
+This is similar to the ROC curve from the non-shrunk values (coefficients from boot50 vars model)
+
+## Bootstrap medians 
+
+This section uses the median coefficients estimated from the bootstrap sampling to evaluate model performance.
+
+```{r}
+## Boot medians
+overview <- as.data.frame(main_results$raw_overview) %>% rownames_to_column("variable")
+
+# Select non-zero values
+boot_medians <- overview %>% 
+  filter(boot_median!=0) %>% 
+  select(variable, boot_median)
+
+# Apply formula
+mi_sum <- mi_sum %>% 
+  mutate(predvals_boot_median = 
+           0.9182 +
+           -0.1783*lab_hgb +
+           0.7803*hiv +
+           0.4369*(drughx=="Former") + 
+           1.157*(drughx=="Current") +            
+           0.7006*diabetes_yn +
+           -0.4557*(age_group=="25-35") +
+           -0.6709*(age_group=="35-45") +
+           -1.1024*(age_group=="45-55") +
+           -0.3533*(age_group=="55+") +
+           -0.0598*educ_years +    
+           0.6162*(smokhx=="Former") +
+           0.4924*(smokhx=="Current") +           
+           -0.0477*bmi +
+           -0.3680*female +
+           0.3792*smear_pos + 
+           0.3895*non_white,
+         predrisk_boot_median = 1/(1+exp(-predvals_boot_median))
+  )
+
+mi_sum %>% 
+  select(predvals_boot_median, predrisk_boot_median, unsuccessful) %>% 
+  tbl_summary(by="unsuccessful")
+```
+
+
+### Performance 
+```{r}  
+boot_med_perf <- ev_glm(method="original", lp="predvals_boot_median", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
+
+brier <- boot_med_perf["Brier", "apparent"]
+slope <- boot_med_perf["Slope", "apparent"]
+intercept <- boot_med_perf["Intercept", "apparent"]
+
+perf_boot_median <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+perf_boot_median
+```
+
+
+CI for apparent c-statistic 
+```{r}
+predvals_boot_median = mi_sum$predvals_boot_median
+
+c_boot_median <- c_ci(predvals_boot_median, outcome_vector)
+c_boot_median
+```
+
+
+### Calibration plot
+```{r}
+cal_plot_solo(mi_sum, predvals_boot_median, outcome_vector)
+```
+
+### ROC curve
+
+```{r}
+plot(ev_glm(method="original", lp="predvals_boot_median", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
+```
+
+
+## LASSO
+
+LASSO with glmnet - lambda minimum and 1se were estimated using 10-fold cross validation. 
+
+```{r}
+# Matrix of x variable values
+x_vars <- model.matrix(model_formula, mi_sum)[,-1]
+
+# Fit lassso
+lasso_fit <- glmnet(x_vars, outcome_vector, family="binomial", alpha=1, seed=SEED)
+
+# Cross validation to select optimal lambda
+cv_lasso <- cv.glmnet(x_vars, outcome_vector, family = "binomial", type.measure="auc", nfolds=10, seed=SEED)
+
+plot(cv_lasso)
+```
+
+
+### Lambda min
+
+Using lambda min, almost all variables from the full model were included:
+
+```{r}
+coef_lasso_min <- coef(cv_lasso, s="lambda.min")
+
+# Predicted risk and values
+predrisk_lasso_min <- cv_lasso %>% predict(newx = x_vars, s="lambda.min", type="response", seed=SEED)
+predrisk_lasso_min_vec = as.vector(predrisk_lasso_min)
+mi_sum$predrisk_lasso_min <- predrisk_lasso_min_vec
+
+predvals_lasso_min <- cv_lasso %>% predict(newx = x_vars, s="lambda.min", seed=SEED)
+predvals_lasso_min_vec = as.vector(predvals_lasso_min)
+mi_sum$predvals_lasso_min <- predvals_lasso_min_vec
+
+# Predicted outcomes lasso min
+predout_lasso_min <-  ifelse(predrisk_lasso_min > 0.5, 1, 0)
+```
+
+#### Performance
+
+The lambda min model had an accuracy (defined as the concordance between predicted outcome - predicted risk >0.5 = outcome, predicted risk <=0.5 = no outcome vs. the true values of the outcome) of: 
+```{r}
+mean(predout_lasso_min == outcome_vector)
+```
+
+Brier score, calibration slope, and calibration intercept of the model:
+ 
+```{r}
+lasso_min_perf <- ev_glm(method="original", lp="predvals_lasso_min", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
+
+brier <- lasso_min_perf["Brier", "apparent"]
+slope <- lasso_min_perf["Slope", "apparent"]
+intercept <- lasso_min_perf["Intercept", "apparent"]
+
+perf_lasso_min <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+perf_lasso_min
+```
+
+CI for apparent c-statistic 
+
+```{r}
+c_lasso_min <- c_ci(predvals_lasso_min_vec, outcome_vector)
+c_lasso_min
+```
+
+
+#### Calibration plot
+
+And here is the calibration curve and c-statistic:
+
+```{r}
+val.prob(predrisk_lasso_min, outcome_vector, cex=.5)
+```
+
+
+#### ROC curve 
+
+```{r}
+plot(ev_glm(method="original", lp="predvals_lasso_min", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
+```
+
+
+### Lambda 1se
+
+
+```{r}
+coef_lasso_1se <- coef(cv_lasso, s="lambda.1se")
+
+# Predicted value sand risks
+predrisk_lasso_1se <- cv_lasso %>% predict(newx = x_vars, s="lambda.1se", type="response", seed=SEED)
+predrisk_lasso_1se_vec = as.vector(predrisk_lasso_1se)
+mi_sum$predrisk_lasso_1se <- predrisk_lasso_1se_vec
+
+
+predvals_lasso_1se <- cv_lasso %>% predict(newx = x_vars, s="lambda.1se", seed=SEED)
+predvals_lasso_1se_vec = as.vector(predvals_lasso_1se)
+mi_sum$predvals_lasso_1se <- predvals_lasso_1se_vec
+
+# Predicted outcome
+predout_lasso_1se <-  ifelse(predrisk_lasso_1se > 0.5, 1, 0)
+```
+
+#### Performance
+
+The lambda min model had an accuracy (defined as the concordance between predicted outcome - predicted risk >0.5 = outcome, predicted risk <=0.5 = no outcome vs. the true values of the outcome) of: 
+```{r}
+mean(predout_lasso_1se == outcome_vector)
+```
+
+Brier score, calibration slope, and calibration intercept of the full model:
+ 
+```{r}
+lasso_1se_perf <- ev_glm(method="original", lp="predvals_lasso_1se", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
+
+brier <- lasso_1se_perf["Brier", "apparent"]
+slope <- lasso_1se_perf["Slope", "apparent"]
+intercept <- lasso_1se_perf["Intercept", "apparent"]
+
+perf_lasso_1se <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+perf_lasso_1se
+```
+
+
+CI for apparent c-statistic 
+
+```{r}
+c_lasso_1se <- c_ci(predvals_lasso_1se_vec, outcome_vector)
+c_lasso_1se
+```
+
+
+#### Calibration plot
+
+And here is the calibration curve and c-statistic:
+
+```{r}
+val.prob(predrisk_lasso_1se, outcome_vector, cex=.5)
+```
+
+
+#### ROC curve 
+
+```{r}
+plot(ev_glm(method="original", lp="predvals_lasso_1se", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
+```
+
+
+
+## Model approximation 
+
+The data below shows the steps of removal of variables from the full model. This is the first step to model approximation. Model all variables against the predicted values from the full model, and then can estimate how well the set of variables predicted the predicted values from the full model. 
+
+```{r}
+approx_full_formula <- as.formula(paste0("predvals_full_model ~", (paste(model_vars[2:length_model_vars], collapse = "+"))))
+
+approx_full_model <- ols(approx_full_formula, sigma=1, data=mi_sum)
+
+fastbw(approx_full_model, aics=10000) 
+```
+
+We see that the variables through age can predict the full moel with an R2 of 0.986. 
+
+
+The code below confirms how well the boot50 model approximates the predicted values from the full model. 
+
+```{r}
+approx_boot_formula = as.formula(paste0("predvals_full_model ~ ",  (paste(boot_vars, collapse = "+"))))
+
+approx_boot_model <- ols(approx_boot_formula, data=mi_sum, x=TRUE, y=TRUE)
+
+coef_approx_model = coef(approx_boot_model)
+
+approx_boot_model$stats["R2"]
+```
+
+
+The mean absolute error between predicted values from the approximate model and predicted values from the full model is:
+
+```{r}
+predvals_approx_mod <- predict(approx_boot_model)
+mi_sum$predvals_approx_mod <- predvals_approx_mod
+
+# Absolute error between approximated model predicted values and full model predicted values
+abs_err <- mean(abs(predvals_approx_mod - predvals_full_model))
+abs_err
+```
+
+
+### Performance 
+
+Brier score, calibration slope, and calibration intercept of the model:
+ 
+```{r}
+approx_perf <- ev_glm(method="original", lp="predvals_approx_mod", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
+
+brier <- approx_perf["Brier", "apparent"]
+slope <- approx_perf["Slope", "apparent"]
+intercept <- approx_perf["Intercept", "apparent"]
+
+perf_approx_model <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+perf_approx_model
+```
+
+
+CI for apparent c-statistic:
+
+```{r}
+c_approx_model <- c_ci(predvals_approx_mod, outcome_vector)
+c_approx_model
+```
+
+
+### Calibration plot
+
+```{r}
+cal_plot_solo(mi_sum, predvals_approx_mod, outcome_vector)
+```
+
+
+### ROC curve 
+
+```{r}
+plot(ev_glm(method="original", lp="predvals_approx_mod", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
+```
+
+
+## Model comparison 
+
+### Coefficients
+
+```{r}
+# Extract names of variables retained in selected model
+selected_vars_int <- names(coef_selected_model[which(coef_selected_model!=0)])
+selected_vars_int <- gsub("Former|Never|Current|25-35|35-45|45-55|55+", "", selected_vars_int)
+selected_vars_int <- unique(selected_vars_int)
+selected_vars <- selected_vars_int[-1]
+
+selected_form <- as.formula(paste0("unsuccessful ~", (paste(selected_vars, collapse = "+"))))
+
+selected_model <- lrm(selected_form, data = mi_sum, x = T, y = T)
+
+predvals_selected_model <- predict(selected_model)
+
+# Model performance selected model - don't need to output because its the same as the boot50 model, but want to store for table
+c_selected_model <- c_ci(predvals_selected_model, outcome_vector)
+
+selected_model_val <- validate(selected_model)
+perf_selected_model <- save_val_results(selected_model_val)
+```
+
+
+```{r}
+# Extract coefficients from each modeling approach and compare
+
+coef_full <- data.frame(coef_full_model) %>% rownames_to_column("variable") %>% rename(full_model = coef_full_model) %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable))
+
+coef_lasso_min <- data.frame(as.array(coef_lasso_min)) %>%  rownames_to_column("variable") %>%  rename(lasso_min = X1) %>% 
+  mutate(variable = gsub("[(]|[)]|=|rcsage, 4", "", variable),
+         variable = gsub("rcsage, 4", "", variable))
+
+coef_lasso_1se <- data.frame(as.array(coef_lasso_1se)) %>%  rownames_to_column("variable") %>%  rename(lasso_1se = X1) %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable),
+         variable = gsub("rcsage, 4", "", variable))
+
+coef_selected <- data.frame(coef_selected_model)  %>% rownames_to_column("variable") %>% rename(selected_model = coef_selected_model) %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable),
+         variable = gsub("rcsage, 4", "", variable))
+
+coef_median <- data.frame(coef_boot_median)  %>% rownames_to_column("variable") %>% rename(boot_median = coef_boot_median) %>%
+  mutate(variable = gsub("[(]|[)]|=", "", variable),
+         variable = gsub("rcsage, 4", "", variable))
+
+coef_boot50_model <- data.frame(coef_boot50_vars)  %>% rownames_to_column("variable") %>% rename(boot50_model = coef_boot50_vars) %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable))
+
+coef_shrink <- data.frame(coef_shrink_model)  %>% rownames_to_column("variable") %>% rename(coef_shrink = coef_shrink_model) %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable))
+
+coef_approx <- data.frame(coef_approx_model)  %>% rownames_to_column("variable") %>% rename(approx_model = coef_approx_model)  %>% 
+  mutate(variable = gsub("[(]|[)]|=", "", variable))
+
+
+var_order <- coef_median %>% pull(variable)
+  
+coefficients_table <- Reduce(function(x,y) merge(x, y, by = "variable", all.x = TRUE, all.y = TRUE),
+       list(coef_full, coef_selected, coef_median, coef_boot50_model, coef_shrink, coef_approx, coef_lasso_min, coef_lasso_1se)) %>% 
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% 
+  arrange(factor(variable, var_order))
+
+coefficients_table
+```
+
+### Performance measures
+
+```{r}
+# -- C statistics ---
+c_stat_list <- as.data.frame(rbind(c_full_model, c_selected_model, c_boot_median, c_boot50_model, c_shrink, c_approx_model, c_lasso_min, c_lasso_1se))
+
+rownames(c_stat_list) <- c("full_model", "selected_model" , "boot_median", "boot50_model", "shrink", "approx", "lambda_min", "lambda_1se")
+
+c_stats <- c_stat_list %>% 
+  rownames_to_column("model") %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  mutate(c_ci = paste(c_stat, " (", LB, ", ", UB, ")", sep="")) %>% 
+  select(model, c_ci)
+
+#--- Brier score, slope, and intercept ---
+performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_median, perf_boot50_model, perf_shrink, perf_approx_model, perf_lasso_min, perf_lasso_1se)))
+
+rownames(performance_list) <- c("full_model", "selected_model", "boot_median", "boot50_model", "shrink", "approx", "lambda_min", "lambda_1se")
+
+performance <- performance_list %>%
+  rownames_to_column("model") %>% 
+  rename(brier_score = "Brier score",
+         cal_slope = "Calibration slope",
+         cal_int = "Calibration intercept")
+
+
+#---- Combine data ---
+models_performance <- performance %>% 
+  full_join(c_stats, by="model") 
+
+models_performance
+
+# Transpose
+t_model_performance <- as.data.frame(t(models_performance)) %>% rownames_to_column("stat")
+```
+
+
+## Main results
+
+### Classification table
+
+Based on coefficients from the boot50 model, here is a classification table broken down by deciles. 
+Each row denotes the classification values for people above that decile are considered as "unsuccessful" (positive) outcome vs. "successful" (negative) outcome. 
+
+
+```{r}
+# Positive = unsuccessful 
+# Negative = successful 
+
+n_total = nrow(mi_sum)
+all_positive = nrow(filter(mi_sum, unsuccessful==1))
+all_negative = nrow(filter(mi_sum, unsuccessful==0))
+
+classification_table <- mi_sum %>% 
+  mutate(risk_group = ntile(predvals_boot50, 10)) %>% 
+  group_by(risk_group) %>% 
+  summarize(
+    n_group = n(), 
+    outcome = sum(unsuccessful),
+    no_outcome = n_group-outcome,
+    obs_prob_outcome = mean(unsuccessful),
+    pred_prob_outcome = mean(predvals_boot50),
+    min_pred_val = min(predvals_boot50),
+    max_pred_val = max(predvals_boot50)) %>% 
+  mutate(n_below_cut_off = cumsum(n_group),
+         perc_below_cut_off = n_below_cut_off/n_total,
+         cm_outcome = cumsum(outcome),
+         cm_no_outcome =cumsum(no_outcome),
+         tp = all_positive - cm_outcome,
+         tn = cm_no_outcome,
+         fp = all_negative - cm_no_outcome,
+         fn = cm_outcome,
+         sensitivity = tp/(tp+fn),
+         specificity = tn/(tn+fp),
+         ppv = tp/(tp+fp),
+         npv = tn/(tn+fn)) %>% 
+  select(risk_group, max_pred_val, n_below_cut_off, perc_below_cut_off, cm_outcome, cm_no_outcome, tp, tn, fp, fn, sensitivity, specificity, ppv, npv)
+    
+
+classification_table
+```
+
+### Nomogram
+
+```{r, fig.height=10, fig.width=8}
+# Set data distribution
+dd <- datadist (mi_sum)
+options(datadist="dd")
+
+boot_model$coefficients
+
+boot_model <- Newlabels(boot_model, c("Hemoglobin (g/dL)", "HIV", "Drug use", "Diabetes", "Age group", "Education (years)", "Tobacco use", "Female sex", "BMI",  "Smear positive", "Non-white"))
+
+nom <- nomogram(boot_model, 
+                fun=plogis,
+                fun.at=c(.001,.01,.05,seq(.1,.9,by=.1),.95,.99,.999),
+                funlabel="Risk of unsuccessful outcome",
+                vnames="labels")
+
+plot(nom)
+```
+
+
+### Risk plot
+
+
+```{r}
+pred_vals <- predvals_boot50
+
+graph_data <- mi_sum %>%
+  mutate(pred_vals = ifelse(pred_vals < -4, -4, pred_vals), # Censor extreme observations
+         pred_vals = ifelse(pred_vals > 1.5, 1.5, pred_vals), # Censor extreme observations
+    risk_group = cut(pred_vals,
+                       breaks = 15)) %>% 
+  group_by(risk_group) %>% 
+  summarize(outcome_prob = mean(unsuccessful),
+            count = n(),
+            min_pred_val = min(pred_vals),
+            max_pred_val = max(pred_vals),
+            mean_pred_val = mean(pred_vals))
+
+scaleFactor <- max(graph_data$count) / max(graph_data$outcome_prob)
+text_size = 15
+
+graph <- graph_data %>% 
+  ggplot(aes(x=mean_pred_val, y=count)) +
+  geom_bar(stat="identity") +
+  geom_line(aes(y=outcome_prob*scaleFactor), color="tomato1", size=1) +
+  scale_y_continuous("Participant count", expand=c(0,0), sec.axis = sec_axis(~./scaleFactor, name = "Outcome probability (%)")) +
+  labs(x="Predicted value") +
+  theme(
+    axis.line.y.right = element_line(color = "tomato1"), 
+    axis.ticks.y.right = element_line(color = "tomato1"),
+    axis.title.y.right=element_text(color="tomato1", size=text_size),
+    axis.title.y.left=element_text(size=text_size),
+    axis.title.x = element_text(size=text_size),
+    axis.text.y.right=element_text(color="tomato1", size=12),
+    axis.text.y.left = element_text(size=12),
+    axis.text.x = element_text(size=12),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(), 
+    axis.line = element_line(colour = "black"))
+  
+graph
+```
+
+
+
+```{r}
+#----  Save all results to Excel -----
+coefficients <- coefficients_table
+performance <- t_model_performance
+
+# Create a blank workbook
+library(openxlsx)
+results <- createWorkbook()
+
+# Add some sheets to the workbook
+addWorksheet(results, "Model-Selection")
+addWorksheet(results, "Coefficients")
+addWorksheet(results, "Performance")
+addWorksheet(results, "Classification-Table")
+
+# Write the data to the sheets
+writeData(results, sheet = "Model-Selection", x = overview)
+writeData(results, sheet = "Coefficients", x = coefficients)
+writeData(results, sheet = "Performance", x = performance)
+writeData(results, sheet = "Classification-Table", x=classification_table)
+
+# Export the file
+saveWorkbook(results, here("Manuscript", "tables", "main_analyses_results.xlsx"), overwrite=TRUE)
+```
+
+
+# Check
+
+Compare results from the 500 bootstraps above to 100 bootstraps from the model_development function that will be used for sensitivity analyses. 
+
+```{r, cache=TRUE}
+set.seed(SEED)
+
+# Set data distribution
+dd <- suppressWarnings(datadist(mi_sum))
+options(datadist="dd")
+
+save_results_all <- model_development(data=mi_sum, 
+                                  outcome=mi_sum$unsuccessful, 
+                                  model_formula=model_formula, 
+                                  approx_full_formula=approx_full_formula, 
+                                  bootstraps=500, 
+                                  seed=SEED)
+
+
+# Model selection
+save_results_all$raw_overview
+
+# Model coefficients
+save_results_all$coefficients_table
+
+# Model performance
+save_results_all$models_performance
+
+# C-statistics
+save_results_all$c_statistics
+
+# Boot50 calibration
+save_results_all$boot50_calibration
+```
+
+# Added value
+
+## Setup 
+
+```{r}
+# Merge imputed data from dissertation analysis to hiv_vars from dissertation data 
+hiv_vars <- Cs(art_experienced, cd4_count, viral_load)
+hiv_data <- data %>% select(subjid, all_of(hiv_vars))
+
+# Add subjid to mi_sum
+analysis_data <- mi_sum %>% 
+  left_join(hiv_data, by="subjid") %>% 
+   mutate(art_experienced = ifelse(hiv==1 & is.na(art_experienced), 0, art_experienced))  # Change never started ART to no prior ART 
+
+# Create dataset with only PLWH for imputation 
+hiv_analysis_data <- analysis_data %>% filter(hiv==1) 
+ 
+# Create data frame to merge back imputed data
+hiv_matches <- hiv_analysis_data %>% 
+  select(subjid, id) %>% 
+  rowid_to_column("hiv_id") 
+
+# Variables used for imputation of HIV-related variables
+hiv_impute <- Cs(diabetes_yn, lab_hgb, evertb, xray_cavit, smear_pos, age_group, female, bmi, dishx_any_minus, educ_years, alcoholhx, drughx, smokhx, non_white, cd4_count, viral_load, art_experienced)
+  
+# Impute
+# 8 values of CD4 and 14 values of viral load were imputed
+mi_hiv <- mice(hiv_analysis_data[,hiv_impute], m=10 , maxit=5, seed=352, printFlag = FALSE)
+
+mi_long_hiv <- complete(mi_hiv, "long") %>% 
+  rename(id=.id) 
+```
+
+
+```{r}
+# Keep only variables that were imputed and add subjids
+mi_sum_hiv <- mi_long_hiv %>% 
+  rename(hiv_id = id) %>% 
+  select(hiv_id, cd4_count, viral_load) %>% 
+  group_by(hiv_id) %>% 
+  summarise(across(where(is.numeric), ~ median(.x, na.rm = TRUE))) %>% 
+  left_join(hiv_matches, by="hiv_id")
+
+# Add HIV summarized data to analysis dataset
+data_to_analyze <- analysis_data %>% 
+  select(!cd4_count & !viral_load) %>% 
+  full_join(mi_sum_hiv, by=Cs(subjid, id)) 
+```
+
+
+```{r}
+# Add added values variables 
+# Build interactions so HIV-negative are not dropped from analysis
+
+# Add to data with missing data from some HIV variables
+data_with_missing <- analysis_data %>% 
+  mutate(
+    baseline_art_all = fct_case_when(
+      hiv==0 | is.na(hiv) ~ "HIV negative",
+      art_experienced==1 ~ "Prior ART",
+      art_experienced==0 ~ "Not on ART"),
+    cd4_lt200_all = fct_case_when( # AIDS = CD4 < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       cd4_count>=200 ~ "CD4 >=200",
+       cd4_count <200 ~ "CD4 <200"),
+    vl_gt200_all = fct_case_when( # Viral suppression = viral load < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       viral_load <200 ~ "VL <200",
+       viral_load >=200 ~ "VL >=200"))
+
+# Add to data with HIV variables imputed
+data_to_analyze <- data_to_analyze %>% 
+  mutate(
+    baseline_art_all = fct_case_when(
+      hiv==0 | is.na(hiv) ~ "HIV negative",
+      art_experienced==1 ~ "Prior ART",
+      art_experienced==0 ~ "Not on ART"),
+    cd4_lt200_all = fct_case_when( # AIDS = CD4 < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       cd4_count>=200 ~ "CD4 >=200",
+       cd4_count <200 ~ "CD4 <200"),
+    vl_gt200_all = fct_case_when( # Viral suppression = viral load < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       viral_load <200 ~ "VL <200",
+       viral_load >=200 ~ "VL >=200"))
+```
+
+Comparison of the distribution of HIV related variables before and after imputation
+```{r}
+data_with_missing %>% 
+  filter(hiv==1) %>% 
+  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, unsuccessful) %>% 
+  tbl_summary(by="unsuccessful") %>% 
+  add_overall()
+
+data_to_analyze %>% 
+  filter(hiv==1) %>% 
+  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, unsuccessful) %>% 
+  tbl_summary(by='unsuccessful') %>% 
+  add_overall()
+```
+
+
+```{r}
+# Full model formula
+full_model_lrm <- lrm(model_formula, data=mi_sum, x=TRUE, y=TRUE)
+full_model_glm <- glm(model_formula, data = mi_sum, family="binomial", x = T, y = T)
+
+# Boot50 model formula
+boot50_model_lrm <-  lrm(boot_form, data=mi_sum, x=TRUE, y=TRUE)
+boot50_model_glm <-  glm(boot_form, data = mi_sum, family="binomial", x = T, y = T)
+```
+
+## Analysis - imputed data
+
+
+```{r}
+# ---- Base model ----
+base_hiv <- lrm(boot_form, data=data_to_analyze)
+
+# ---- Outcome -----
+y = data_to_analyze$unsuccessful
+```
+
+
+### ART
+
+```{r}
+add_art <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + baseline_art_all, data=data_to_analyze) 
+
+# Added value function
+add_art_results <- added_value(base_hiv, add_art, y)
+```
+
+
+Likelihood ratio test:
+
+```{r}
+add_art_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_art_results$nri_idi
+```
+
+
+Added value metrics recommended by [Frank Harrell](https://www.fharrell.com/post/addvalue/):
+
+```{r}
+add_art_results$table
+```
+
+
+### CD4
+
+Likelihood ratio test: 
+
+```{r}
+add_cd4 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + cd4_lt200_all, data=data_to_analyze) 
+
+add_cd4_results <- added_value(base_hiv, add_cd4, y)
+```
+
+
+The likelihood ratio test is: 
+```{r}
+add_cd4_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_cd4_results$nri_idi
+```
+
+
+Added value table:
+
+```{r}
+add_cd4_results$table
+```
+
+
+### VL
+
+```{r}
+add_vl <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + vl_gt200_all, data=data_to_analyze) 
+
+add_vl_results <- added_value(base_hiv, add_vl, y)
+```
+
+
+Likelihood ratio test:
+
+```{r}
+add_vl_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_vl_results$nri_idi
+```
+
+
+Added value table:
+
+```{r}
+add_vl_results$table
+```
+
+
+
+## Analysis - CC
+
+Complete case analysis
+No one was missing ART, so I will only repeat for CD4 count and viral load
+
+
+### CD4
+
+```{r}
+# --- Non missing data ---
+cc_analaysis <- data_with_missing %>% 
+  filter(!is.na(cd4_lt200_all))
+
+
+# ---- Base model ----
+base_hiv <- lrm(boot_form, data=cc_analaysis)
+
+# ---- Outcome -----
+y = cc_analaysis$unsuccessful
+```
+
+
+```{r}
+add_cd4 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + cd4_lt200_all, data=cc_analaysis) 
+
+add_cd4_results <- added_value(base_hiv, add_cd4, y)
+```
+
+
+Likelihood ratio test:
+
+```{r}
+add_cd4_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_cd4_results$nri_idi
+```
+
+
+Added value table:
+
+```{r}
+add_cd4_results$table
+```
+
+
+### VL
+
+
+```{r}
+# --- Non missing data ---
+cc_analaysis <- data_with_missing %>% 
+  filter(!is.na(vl_gt200_all))
+
+
+# ---- Base model ----
+base_hiv <- lrm(boot_form, data=cc_analaysis)
+
+# ---- Outcome -----
+y = cc_analaysis$unsuccessful
+```
+
+
+
+```{r}
+add_vl <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + vl_gt200_all, data=cc_analaysis) 
+
+add_vl_results <- added_value(base_hiv, add_vl, y)
+```
+
+
+Likelihood ratio test:
+```{r}
+add_vl_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_vl_results$nri_idi
+```
+
+
+Added value table:
+
+```{r}
+add_vl_results$table
+```
+
+
+
+```{r}
+sessionInfo()
+```
+
+
