@@ -11,3 +11,7 @@
 
 # Ignore setup
 /report_tb_pm_setup.Rmd
+
+# Ignore gitignore file
+.gitignore
+.DS_Store
