@@ -1157,7 +1157,82 @@ save_results_all$boot50_calibration
 
 # Added value
 
-## Setup 
+
+### NAT2
+
+```{r, eval=FALSE, include=FALSE}
+
+# START HERE FOR ADDED VALUE ANALYSIS AFTER RUNNING FUNCTIONS AND LOADING LSP DATA
+
+# Save datasets
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata")
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata")
+
+# Add NAT2 data to imputed analysis data
+nat2_data <- data %>% 
+  select(subjid, nat2_cat)
+
+mi_sum <- mi_sum %>% 
+  left_join(nat2_data, by="subjid")
+
+# Create age groups
+mi_sum <- mi_sum %>% 
+  mutate(age_group = fct_case_when(
+    age < 25 ~ "<25",
+    age >= 25 & age <35 ~ "25-35",
+    age >=35 & age <45 ~ "35-45",
+    age >=45 & age <55 ~ "45-55",
+    age >= 55 ~ "55+"
+  ))
+
+mi_sum %>% 
+  select(nat2_cat, unsuccessful) %>% 
+  tbl_summary(by="unsuccessful") %>% 
+  add_overall()
+```
+
+
+
+```{r}
+base_model <- lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group, data=mi_sum)
+
+# ---- Outcome -----
+y = mi_sum$unsuccessful
+```
+
+
+```{r}
+add_nat2 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + nat2_cat, data=mi_sum) 
+
+# Added value function
+add_nat2_results <- added_value(base_model, add_nat2, y)
+```
+
+
+Likelihood ratio test:
+
+```{r}
+add_nat2_results$lrtest
+```
+
+
+NRI and IDI:
+
+```{r}
+add_nat2_results$nri_idi
+```
+
+
+Added value metrics recommended by [Frank Harrell](https://www.fharrell.com/post/addvalue/):
+
+```{r}
+add_nat2_results$table
+```
+
+
+
+
+## HIV setup 
 
 ```{r}
 # Merge imputed data from dissertation analysis to hiv_vars from dissertation data 
