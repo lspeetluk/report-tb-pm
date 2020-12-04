@@ -386,7 +386,7 @@ main_results$overview
 
 ### Frequnecy table
 
-The table below shows the frequency of how often models were selected during the bootstrap sampling. The boot50 model (including variables selected in at least 50% of bootstrap samples) was selected <2% of the time. Tied for most selected model. Shows variability of resampling procedure. 
+The table below shows the frequency of how often models were selected during the bootstrap sampling. The boot model (including variables selected in at least 50% of bootstrap samples) was selected <2% of the time. Tied for most selected model. Shows variability of resampling procedure. 
 
 ```{r}
 main_results$freq_table
@@ -405,36 +405,53 @@ main_results$pair_table
 
 
 ```{r}
-# Save coefficients from selected model and boot50 model
+# Raw overview table as a dataframe
+raw_table <- as.data.frame(main_results$raw_overview) %>% rownames_to_column("variable")
+
+
+# Save coefficients from selected model and boot medians
 coef_selected_model <- main_results$raw_overview[,"sel_est"]
 coef_boot_median <- main_results$raw_overview[,"boot_median"]
+
+
+# Added 12/4
+threshold <- 80
+
+boot60_vars <- as.data.frame(main_results$raw_overview) %>% 
+  rownames_to_column("variable") %>% 
+  filter(boot_inclusion>=threshold) %>% 
+  pull(variable)
+
+boot60_vars
 ```
 
 
-## Boot50
+## Bootstrap selected model ("boot" model)
 
 The main ("final") model, based on variables that were selected in at least 50% of bootstrap samples. 
 
 The c-statistic of this model is: 
 
 ```{r}
-# Extract names of variables retained in boot50 model
-boot_vars_int <- names(coef_boot_median[which(coef_boot_median!=0)])
+threshold = 60
+
+# Extract names of variables retained in boot model based on threshold above
+boot_vars_int <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
 boot_vars_int <- gsub("Former|Never|Current|25-35|35-45|45-55|55+", "", boot_vars_int)
 boot_vars_int <- unique(boot_vars_int)
 boot_vars <- boot_vars_int[-1]
 
-# Boot50 formula
+# Boot model formula
 boot_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+"))))
 
-# Boot50 model
+# Boot model
 boot_model <- lrm(boot_form, data = mi_sum, x = T, y = T)
 
-# Boot50 validation
+# Boot model validation
 boot_val <- validate(boot_model, B=200, seed=SEED)
 
 # Coefficients from the model refit including only variables from the 50% or more boostraps
-coef_boot50_vars <- boot_model$coefficients
+coef_boot_vars <- boot_model$coefficients
 ```
 
 
@@ -443,19 +460,19 @@ coef_boot50_vars <- boot_model$coefficients
 Brier score, calibration slope, and calibration intercept of the full model:
  
 ```{r}
-perf_boot50_model <- save_val_results(boot_val)
-perf_boot50_model
+perf_boot_model <- save_val_results(boot_val)
+perf_boot_model
 ```
 
 CI for apparent c-statistic 
 
 ```{r}
 # Predicted values 
-predvals_boot50 <- predict(boot_model)
-mi_sum$predvals_boot50 <- predvals_boot50 
+predvals_boot <- predict(boot_model)
+mi_sum$predvals_boot <- predvals_boot 
 
-c_boot50_model <- c_ci(predvals_boot50, outcome_vector)
-c_boot50_model
+c_boot_model <- c_ci(predvals_boot, outcome_vector)
+c_boot_model
 ```
 
 
@@ -480,7 +497,7 @@ I also wrote a code that constructs a calibration plot, but does not include bia
 
 ```{r}
 # My functions for calibration plot
-cal_plot_solo(mi_sum, predvals_boot50, outcome_vector)
+cal_plot_solo(mi_sum, predvals_boot, outcome_vector)
 ```
 
 **More validation measures**
@@ -494,11 +511,11 @@ boot_val
 
 ```{r}
 # Predicted risk
-predrisk_boot50 <- 1/(1+exp(-predvals_boot50))
-mi_sum$predrisk_boot50 = predrisk_boot50
+predrisk_boot <- 1/(1+exp(-predvals_boot))
+mi_sum$predrisk_boot = predrisk_boot
 
 # ROC curve
-roc <- roc(mi_sum, unsuccessful, predrisk_boot50, ci=TRUE)
+roc <- roc(mi_sum, unsuccessful, predrisk_boot, ci=TRUE)
 roc 
 
 plot(roc)
@@ -508,13 +525,13 @@ plot(roc, add=TRUE)
 
 **Hosmer-Lemeshow test**
 ```{r}
-hoslem.test(outcome_vector, predrisk_boot50, g=20)
+hoslem.test(outcome_vector, predrisk_boot, g=20)
 ```
 
 
-## Shrinkage from boot50 model 
+## Shrinkage from boot model 
 
-Below I use the variables from the boot50 model and model fit to estimate the heuristic shrinkage factor. 
+Below I use the variables from the boot model and model fit to estimate the heuristic shrinkage factor. 
 
 A heuristic shrinkage factor is suggested to improve predictions in new patients, and can be estimated as:
 $$\chi^2_{model} - df /    \chi^2_{model}$$  
@@ -524,8 +541,8 @@ $$\chi^2_{model} - df /    \chi^2_{model}$$
 shrinkage_factor <- (boot_model$stats["Model L.R."] - boot_model$stats["d.f."]) / (boot_model$stats["Model L.R."])
 shrinkage_factor
 
-# Adjust coefficients from boot50 variable model by shrinkage factor
-coef_shrink_model <- coef_boot50_vars*shrinkage_factor
+# Adjust coefficients from boot variable model by shrinkage factor
+coef_shrink_model <- coef_boot_vars*shrinkage_factor
 
 # Predicted values and predicted from boot_model*shrinkage factor
 predvals_shrink <- predict(boot_model)*shrinkage_factor
@@ -574,18 +591,15 @@ plot(ev_glm(method="original", lp="predvals_shrink", outcome="unsuccessful", dat
 
 ```
 
-This is similar to the ROC curve from the non-shrunk values (coefficients from boot50 vars model)
+This is similar to the ROC curve from the non-shrunk values (coefficients from boot vars model)
 
 ## Bootstrap medians 
 
 This section uses the median coefficients estimated from the bootstrap sampling to evaluate model performance.
 
 ```{r}
-## Boot medians
-overview <- as.data.frame(main_results$raw_overview) %>% rownames_to_column("variable")
-
 # Select non-zero values
-boot_medians <- overview %>% 
+boot_medians <- raw_table %>% 
   filter(boot_median!=0) %>% 
   select(variable, boot_median)
 
@@ -815,7 +829,7 @@ fastbw(approx_full_model, aics=10000)
 We see that the variables through age can predict the full moel with an R2 of 0.986. 
 
 
-The code below confirms how well the boot50 model approximates the predicted values from the full model. 
+The code below confirms how well the boot model approximates the predicted values from the full model. 
 
 ```{r}
 approx_boot_formula = as.formula(paste0("predvals_full_model ~ ",  (paste(boot_vars, collapse = "+"))))
@@ -895,7 +909,7 @@ selected_model <- lrm(selected_form, data = mi_sum, x = T, y = T)
 
 predvals_selected_model <- predict(selected_model)
 
-# Model performance selected model - don't need to output because its the same as the boot50 model, but want to store for table
+# Model performance selected model - don't need to output because its the same as the boot model, but want to store for table
 c_selected_model <- c_ci(predvals_selected_model, outcome_vector)
 
 selected_model_val <- validate(selected_model)
@@ -925,7 +939,7 @@ coef_median <- data.frame(coef_boot_median)  %>% rownames_to_column("variable") 
   mutate(variable = gsub("[(]|[)]|=", "", variable),
          variable = gsub("rcsage, 4", "", variable))
 
-coef_boot50_model <- data.frame(coef_boot50_vars)  %>% rownames_to_column("variable") %>% rename(boot50_model = coef_boot50_vars) %>% 
+coef_boot_model <- data.frame(coef_boot_vars)  %>% rownames_to_column("variable") %>% rename(boot_model = coef_boot_vars) %>% 
   mutate(variable = gsub("[(]|[)]|=", "", variable))
 
 coef_shrink <- data.frame(coef_shrink_model)  %>% rownames_to_column("variable") %>% rename(coef_shrink = coef_shrink_model) %>% 
@@ -938,7 +952,7 @@ coef_approx <- data.frame(coef_approx_model)  %>% rownames_to_column("variable")
 var_order <- coef_median %>% pull(variable)
   
 coefficients_table <- Reduce(function(x,y) merge(x, y, by = "variable", all.x = TRUE, all.y = TRUE),
-       list(coef_full, coef_selected, coef_median, coef_boot50_model, coef_shrink, coef_approx, coef_lasso_min, coef_lasso_1se)) %>% 
+       list(coef_full, coef_selected, coef_median, coef_boot_model, coef_shrink, coef_approx, coef_lasso_min, coef_lasso_1se)) %>% 
   mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% 
   arrange(factor(variable, var_order))
 
@@ -949,9 +963,9 @@ coefficients_table
 
 ```{r}
 # -- C statistics ---
-c_stat_list <- as.data.frame(rbind(c_full_model, c_selected_model, c_boot_median, c_boot50_model, c_shrink, c_approx_model, c_lasso_min, c_lasso_1se))
+c_stat_list <- as.data.frame(rbind(c_full_model, c_selected_model, c_boot_median, c_boot_model, c_shrink, c_approx_model, c_lasso_min, c_lasso_1se))
 
-rownames(c_stat_list) <- c("full_model", "selected_model" , "boot_median", "boot50_model", "shrink", "approx", "lambda_min", "lambda_1se")
+rownames(c_stat_list) <- c("full_model", "selected_model" , "boot_median", "boot_model", "shrink", "approx", "lambda_min", "lambda_1se")
 
 c_stats <- c_stat_list %>% 
   rownames_to_column("model") %>% 
@@ -960,9 +974,9 @@ c_stats <- c_stat_list %>%
   select(model, c_ci)
 
 #--- Brier score, slope, and intercept ---
-performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_median, perf_boot50_model, perf_shrink, perf_approx_model, perf_lasso_min, perf_lasso_1se)))
+performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_median, perf_boot_model, perf_shrink, perf_approx_model, perf_lasso_min, perf_lasso_1se)))
 
-rownames(performance_list) <- c("full_model", "selected_model", "boot_median", "boot50_model", "shrink", "approx", "lambda_min", "lambda_1se")
+rownames(performance_list) <- c("full_model", "selected_model", "boot_median", "boot_model", "shrink", "approx", "lambda_min", "lambda_1se")
 
 performance <- performance_list %>%
   rownames_to_column("model") %>% 
@@ -986,7 +1000,7 @@ t_model_performance <- as.data.frame(t(models_performance)) %>% rownames_to_colu
 
 ### Classification table
 
-Based on coefficients from the boot50 model, here is a classification table broken down by deciles. 
+Based on coefficients from the boot model, here is a classification table broken down by deciles. 
 Each row denotes the classification values for people above that decile are considered as "unsuccessful" (positive) outcome vs. "successful" (negative) outcome. 
 
 
@@ -999,16 +1013,16 @@ all_positive = nrow(filter(mi_sum, unsuccessful==1))
 all_negative = nrow(filter(mi_sum, unsuccessful==0))
 
 classification_table <- mi_sum %>% 
-  mutate(risk_group = ntile(predvals_boot50, 10)) %>% 
+  mutate(risk_group = ntile(predvals_boot, 10)) %>% 
   group_by(risk_group) %>% 
   summarize(
     n_group = n(), 
     outcome = sum(unsuccessful),
     no_outcome = n_group-outcome,
     obs_prob_outcome = mean(unsuccessful),
-    pred_prob_outcome = mean(predvals_boot50),
-    min_pred_val = min(predvals_boot50),
-    max_pred_val = max(predvals_boot50)) %>% 
+    pred_prob_outcome = mean(predvals_boot),
+    min_pred_val = min(predvals_boot),
+    max_pred_val = max(predvals_boot)) %>% 
   mutate(n_below_cut_off = cumsum(n_group),
          perc_below_cut_off = n_below_cut_off/n_total,
          cm_outcome = cumsum(outcome),
@@ -1052,7 +1066,7 @@ plot(nom)
 
 
 ```{r}
-pred_vals <- predvals_boot50
+pred_vals <- predvals_boot
 
 graph_data <- mi_sum %>%
   mutate(pred_vals = ifelse(pred_vals < -4, -4, pred_vals), # Censor extreme observations
@@ -1136,6 +1150,7 @@ save_results_all <- model_development(data=mi_sum,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=500, 
+                                  threshold=50,
                                   seed=SEED)
 
 
@@ -1151,8 +1166,8 @@ save_results_all$models_performance
 # C-statistics
 save_results_all$c_statistics
 
-# Boot50 calibration
-save_results_all$boot50_calibration
+# Boot calibration
+save_results_all$boot_calibration
 ```
 
 # Added value
@@ -1186,9 +1201,12 @@ mi_sum <- mi_sum %>%
   ))
 
 mi_sum %>% 
-  select(nat2_cat, unsuccessful) %>% 
-  tbl_summary(by="unsuccessful") %>% 
-  add_overall()
+  tbl_cross(nat2_cat, outcome_cat,
+            percent="row")
+
+mi_sum %>% 
+  tbl_cross(nat2_cat, unsuccessful,
+            percent="col")
 ```
 
 
@@ -1338,9 +1356,9 @@ data_to_analyze %>%
 full_model_lrm <- lrm(model_formula, data=mi_sum, x=TRUE, y=TRUE)
 full_model_glm <- glm(model_formula, data = mi_sum, family="binomial", x = T, y = T)
 
-# Boot50 model formula
-boot50_model_lrm <-  lrm(boot_form, data=mi_sum, x=TRUE, y=TRUE)
-boot50_model_glm <-  glm(boot_form, data = mi_sum, family="binomial", x = T, y = T)
+# boot model formula
+boot_model_lrm <-  lrm(boot_form, data=mi_sum, x=TRUE, y=TRUE)
+boot_model_glm <-  glm(boot_form, data = mi_sum, family="binomial", x = T, y = T)
 ```
 
 ## Analysis - imputed data

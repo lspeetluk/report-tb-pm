@@ -676,9 +676,10 @@ model_selection <- function(model_formula, data, boots=200, return, pval_pair=0.
 #' model_formula: formula of full model
 #' approx_full_formula = formula with "predvals_full_model" as dependent variable
 #' boostraps: number of boostraps for validation and bootstrap resampling
+#' threshold: % of bootstraps that we require a variable to be selected in (default is 50)
 
 
-model_development <- function(data, outcome, model_formula, approx_full_formula, bootstraps=200, seed=53421){
+model_development <- function(data, outcome, model_formula, approx_full_formula, bootstraps=200, threshold=50, seed=53421){
   
   # Outcome vector 
   outcome_vector <- outcome
@@ -714,13 +715,14 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   formatted_table <- test$overview
   boot_median_c_stat = test$c_stat_boot
   
-  # Save coefficients from selected model and boot50 model
+  # Save coefficients from selected model and boot model
   coef_selected_model <- test$raw_overview[,"sel_est"]
   coef_boot_median <- test$raw_overview[,"boot_median"]
   
   #------- Selected model
   # Extract names of variables retained in selected model
-  selected_vars_int <- names(coef_selected_model[which(coef_selected_model!=0)])
+  selected_vars_int <- raw_table %>% filter(coef_selected_model!=0) %>% pull(variable)
+  #selected_vars_int <- names(coef_selected_model[which(coef_selected_model!=0)]) # old code
   selected_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|55+", "", selected_vars_int)
   selected_vars_int <- gsub(")age|)age'", ")", selected_vars_int)
   selected_vars_int <- gsub("4)'", "4)", selected_vars_int)
@@ -737,10 +739,11 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   perf_selected_model <- save_val_results(selected_val)
   c_selected_model <- c_ci(predvals_selected, outcome_vector)
   
-  # ------ Bootstrap 50 model 
+  # ------ Bootstrap model 
   
-  # Extract names of variables retained in boot50 model
-  boot_vars_int <- names(coef_boot_median[which(coef_boot_median!=0)])
+  # Extract names of variables retained in boot model
+  boot_vars_int <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
+  # boot_vars_int <- names(coef_boot_median[which(coef_boot_median!=0)])
   boot_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|55+", "", boot_vars_int)
   boot_vars_int <- gsub(")age|)age'", ")", boot_vars_int)
   boot_vars_int <- gsub("4)'", "4)", boot_vars_int)
@@ -750,36 +753,36 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   boot_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+"))))
   
   boot_model <- lrm(boot_form, data = data, x = T, y = T)
-  predvals_boot50 <- predict(boot_model)
+  predvals_boot_model <- predict(boot_model)
   
-  # Coefficients from the model refit including only variables from the 50% or more boostraps
-  coef_boot50_vars <- boot_model$coefficients
+  # Coefficients from the model refit including only variables from the threshold of bootstrap %
+  coef_boot_vars <- boot_model$coefficients
   
   # Performance
   boot_val <- validate(boot_model, B=bootstraps, seed=seed)
-  perf_boot50_model <- save_val_results(boot_val)
-  c_boot50_model <- c_ci(predvals_boot50, outcome_vector)
+  perf_boot_model <- save_val_results(boot_val)
+  c_boot_model <- c_ci(predvals_boot_model, outcome_vector)
   
-  # C statistic - BOOT 50 model (optimism corrected)
+  # C statistic - BOOT model (optimism corrected)
   c_stat_boot <- c_stat_ci(model=boot_model, data=data)
   
   # Calibration plot function
-  data$predvals_boot50 <- predvals_boot50
-  calibration_plot_boot50 <- cal_plot_solo(data, predvals_boot50, outcome_vector)
+  data$predvals_boot_model <- predvals_boot_model
+  calibration_plot_boot <- cal_plot_solo(data, predvals_boot_model, outcome_vector)
   
   
   # ------- Shrinkage 
-  # Shrink coefficients from boot50 vars model (vars selected in at least 50% of boostraps) by the heuristic shrinkage factor
+  # Shrink coefficients from boot vars model (vars selected in threshold of boostraps) by the heuristic shrinkage factor
   
   # Heuristic shrinkage factor  
   shrinkage_factor <- (boot_model$stats["Model L.R."] - boot_model$stats["d.f."]) / (boot_model$stats["Model L.R."])
   
-  # Predicted values from boot_50_model shrunk based on heuristic shrinkage factor
+  # Predicted values from boot_model shrunk based on heuristic shrinkage factor
   predvals_shrink <- predict(boot_model)*shrinkage_factor
   predrisk_shrink <- 1/(1+exp(-predvals_shrink))
   
-  # Shrink coefficients from 50% of the bootstraps by shrinkage factor
-  coef_shrink_model <- coef_boot50_vars*shrinkage_factor
+  # Shrink coefficients from threshold % of the bootstraps by shrinkage factor
+  coef_shrink_model <- coef_boot_vars*shrinkage_factor
   
   data$predrisk_shrink = predrisk_shrink
   data$predvals_shrink = predvals_shrink
@@ -801,13 +804,13 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   roc_shrink <- suppressMessages(roc(data, outcome, predrisk_shrink, ci=TRUE))
   
   
-  # ----- Approximated model performance with boot50 vars 
+  # ----- Approximated model performance with boot vars 
   
   approx_boot_formula = as.formula(paste0("predvals_full_model ~ ",  (paste(boot_vars, collapse = "+"))))
   
   approx_boot_model <- ols(approx_boot_formula, data = data, x=TRUE, y=TRUE)
   
-  # Save data from approximated model - this tells how well the boot50 variables predict the predicted values from the full model
+  # Save data from approximated model - this tells how well the boot variables predict the predicted values from the full model
   approx_boot_model_r2 <- approx_boot_model$stats["R2"]
   
   # Save predicted values
@@ -841,7 +844,7 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
     mutate(variable = gsub("[(]|[)]|=", "", variable),
            variable = gsub("rcsage, 4", "", variable))
   
-  coef_boot50_model <- data.frame(coef_boot50_vars)  %>% rownames_to_column("variable") %>% rename(coef_boot50_model = coef_boot50_vars) %>% 
+  coef_boot_model <- data.frame(coef_boot_vars)  %>% rownames_to_column("variable") %>% rename(coef_boot_model = coef_boot_vars) %>% 
     mutate(variable = gsub("[(]|[)]|=", "", variable))
   
   coef_shrink <- data.frame(coef_shrink_model)  %>% rownames_to_column("variable") %>% rename(coef_shrink = coef_shrink_model) %>% 
@@ -854,7 +857,7 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   var_order <- coef_boot_median %>% pull(variable)
   
   coefficients_table <- Reduce(function(x,y) merge(x, y, by = "variable", all.x = TRUE, all.y = TRUE),
-                               list(coef_full, coef_selected, coef_boot_median, coef_boot50_model, coef_shrink, coef_approx)) %>% 
+                               list(coef_full, coef_selected, coef_boot_median, coef_boot_model, coef_shrink, coef_approx)) %>% 
     mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% 
     arrange(factor(variable, var_order))
   
@@ -862,9 +865,9 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   #-------- Compare performance 
   
   # -- C statistics ---
-  c_stat_list <- as.data.frame(rbind(c_full_model, c_selected_model, c_boot50_model, c_shrink, c_approx_model))
+  c_stat_list <- as.data.frame(rbind(c_full_model, c_selected_model, c_boot_model, c_shrink, c_approx_model))
   
-  rownames(c_stat_list) <- c("full_model", "selected_model", "boot50_model", "shrink", "approx")
+  rownames(c_stat_list) <- c("full_model", "selected_model", "boot_model", "shrink", "approx")
   
   c_stats <- c_stat_list %>% 
     rownames_to_column("model") %>% 
@@ -873,9 +876,9 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
     select(model, c_ci)
   
   #--- Brier score, slope, and intercept ---
-  performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot50_model, perf_shrink, perf_approx_model)))
+  performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_model, perf_shrink, perf_approx_model)))
   
-  rownames(performance_list) <- c("full_model", "selected_model",  "boot50_model", "shrink", "approx")
+  rownames(performance_list) <- c("full_model", "selected_model",  "boot_model", "shrink", "approx")
   
   performance <- performance_list %>%
     rownames_to_column("model") %>% 
@@ -894,12 +897,12 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   # ----- Output 
   # C-statistics from:
   #   - Full model
-  #   - Boot50 model 
+  #   - boot model 
   return(list(
     "coefficients_table" = coefficients_table,
     "models_performance" = t_model_performance,
-    "c_statistics" = list(full_model = c_stat_full, boot50_model = c_stat_boot),
-    "boot50_calibration" = calibration_plot_boot50,
+    "c_statistics" = list(full_model = c_stat_full, boot_model = c_stat_boot),
+    "boot_calibration" = calibration_plot_boot,
     "roc_shrink" = roc_shrink,
     "raw_overview " = raw_table,
     "formatted_overview" = formatted_table,

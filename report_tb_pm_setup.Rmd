@@ -1,0 +1,346 @@
+---
+title: "TB PM Setup"
+author: "Lauren Peetluk"
+date: "`r Sys.Date()`"
+output:
+   
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    number_section: false
+    toc_float:
+      collapsed: true
+    theme: simplex
+    code_folding: hide
+  pdf_document:
+    keep_tex: true
+---
+
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE}
+# Required packages
+library(Hmisc)
+library(kableExtra)
+library(tidyverse)
+library(here)
+library(skimr)
+library(gmodels)
+library(gtsummary)
+library(rpart)
+library(mice)
+library(rms)
+library(glmnet)
+library(cowplot)
+library(hrbrthemes)
+library(pROC)
+
+
+# Global options
+options(prType='plain')
+options(digits=3)
+knitrSet(lang='markdown', h=6, w=6)
+
+knitr::opts_chunk$set(
+  fig.path = "images/", 
+  cache.path = 'cache/images-',
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+
+
+
+# gtsmmary options
+options(gtsummary.as_gt.addl_cmds = "gt::tab_options(table.font.size = 'small', data_row.padding = gt::px(1))")
+
+# Dataset
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/dissertation_data.Rdata")
+```
+
+`r hidingTOC(buttonLabel="Outline", levels=2)`
+
+# Functions 
+
+```{r}
+# Run functions
+source(here("Manuscript", "manuscript_functions.R"))
+```
+
+# Overview
+
+## Study population 
+
+The data for this project is from the Regional Prospective Observational Research for Tuberculosis (RePORT) - Brazil study, which is an ongoing cohort study at 5 participating sites in Brazil. We enroll active TB cases, and follow them for up to 24 months for TB treatment outcomes. However, for this project we will only need 12 months of follow-up to define outcomes (details below).
+
+## Inclusion/Exclusion criteria
+
+These reflect the inclusion/exclusion criteria for the TB/HIV R01
+
+**Inclusion criteria**
+
+- Newly diagnosed pulmonary TB patients 
+- Age $\geq$ 18 years
+- Culture-confirmed for *mycobacterium tuberculosis* on solid or liquid media
+- Drug susceptible to isoniazid or rifampin
+- Started on standard TB treatment regimen (isonizid, rifampin/rifabutin, ethambutol, and pyrazinamide)
+- Have DNA avaialable for genotyping
+
+
+**Exclusion criteria**
+
+- Recieved $\geq$ 7 days of TB treamtment or any floroquinolone antibiotic therapy (for any reason) in the past 30 days
+- Women who are pregnant or breastfeeding
+- Persons who are not planning to remain in the region during the study period
+- Missing HIV status
+
+
+Although, culture confirmation of TB and drug-susceptibility testing typically are not available for 30 days, RePORT protocol does not follow culture-negative TB cases, so if included, they would be missing outcomes. I understand this means the prediction model would be applied to population that is not wholly representative of the population included in the development the model, and will address that as a limitation. 
+
+
+```{r, include=FALSE}
+# Remove a105253 --- mis-coded
+dissertation_data <- dissertation_data %>% 
+  filter(subjid!="a105253")
+
+# Exclusions
+with(dissertation_data, tab(r01))
+
+exclude <- dissertation_data %>% 
+  filter(r01==0)
+
+with(exclude, tab(rifa_result, iso_result, all_exclude))
+
+exclude %>% 
+  filter(all_exclude==0 & iso_result==0 & rifa_result==0) %>% 
+  select(subjid, first_tb_regimen, standard_regimen) %>% 
+  arrange(standard_regimen)
+```
+
+
+```{r, include=FALSE}
+cfn <- Cs(smokhx, alcoholhx, drughx)
+
+# ----- Data cleaning ----
+dissertation_data <- dissertation_data %>% 
+  mutate(xray_cavit = ifelse(xray_cavit=="Yes", 1, 0), # Impossible to determine by exam is "No"
+         extrapul = ifelse(extrapul==9, 0, extrapul), # Make extrapul 0 if no results
+         bmi = ifelse(bmi>50, NA, bmi), # Make BMI missing if infinity
+         educ_years = ifelse(edulevel==2, 0, educ_years), # Illiterate = no years education
+         race = as.factor(race2.factor),
+         smear_pos = as.numeric(smear_pos)-1, # convert smear pos to numeric
+         diabetes_yn = case_when(  #Diabetes based on self report of diabetes category
+           diabetes_cat == "Diabetes" | dishx_diabetes==1 ~ 1,
+           diabetes_cat != "Diabetes" | dishx_diabetes==0 ~ 0,
+           is.na(diabetes_cat) & is.na(dishx_diabetes) ~ NA_real_),
+         dishx_any_minus = case_when(  #Any other comorbidiy other than diabetes and HIV
+           dishx_cancer==1 | dishx_copd_empy==1 | dishx_kidney==1 | dishx_hypertension==1 | (dishx_other==1 & !grepl("hiv", diseasehx_other)) ~ 1, 
+           TRUE ~ 0),
+         unsuccessful_old = unsuccessful,   # Update outcome definitions to include regimen switch
+         unsuccessful = unsuccessful_plus,
+         outcome_cat_old = outcome_cat,
+         outcome_cat = outcome_cat_plus,
+         tto_outcome = case_when(
+           outcome_cat=="Regimen switch" ~ tto_outcome_plus,
+           TRUE  ~ (tto_outcome_min+tto_outcome_max)/2)) %>% 
+  mutate_at(vars(any_of(cfn)), 
+                 function(x) relevel(factor(x), ref="Never")) %>% 
+  mutate(
+    art_experienced = ifelse(is.na(art_experienced), 0, art_experienced),
+    baseline_art_all = fct_case_when(
+      hiv==0 | is.na(hiv) ~ "HIV negative",
+      art_experienced==1 ~ "Prior ART",
+      art_experienced==0 ~ "Not on ART"),
+    cd4_lt200_all = fct_case_when( # AIDS = CD4 < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       cd4_count>=200 ~ "CD4 >=200",
+       cd4_count <200 ~ "CD4 <200"),
+    vl_gt200_all = fct_case_when( # Viral suppression = viral load < 200
+       hiv==0 | is.na(hiv) ~ "HIV negative",
+       viral_load <200 ~ "VL <200",
+       viral_load >=200 ~ "VL >=200"))
+
+
+# Keep only people in the R01 
+data <- dissertation_data %>% 
+  filter(r01==1)
+
+# --- Data checks ---
+data %>%  filter(extrapul==9) %>%  select(contains("eptb"))
+data %>%  filter(bmi>50) %>%  select(subjid, bmi, weight, height)
+data %>%  filter(edulevel==2) %>%  select(educ_years) %>% skim()
+with(data, tab(xray_cavit))
+
+# Checks 
+with(data, tab(diabetes_cat, dishx_diabetes))
+with(data, tab(dishx_diabetes, diabetes_yn))
+with(data, tab(dishx_diabetes, dishx_any_minus))
+```
+
+
+```{r, include=FALSE}
+# --- Race? ---
+with(data, row_tab(race, unsuccessful_plus))
+with(data, row_tab(non_white, unsuccessful_plus))
+```
+
+
+```{r, include=FALSE}
+# Save data
+save(data, file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata")
+```
+
+
+The final sample size is 944. 
+
+We arrived at this sample size by starting with 1189 participants enrolled in RePORT and excluded: 
+
+- 136 who were not culture positive
+- 95 who were not susceptible to isoniazid or rifampin
+- 8 who didn't start standard TB treatment
+- 5 who didn't have blood shipped for DNA analysis 
+
+### Table - Included vs. Excluded 
+
+```{r}
+dissertation_data %>% 
+  select(r01, age, bmi, female, site, race2.factor, non_white, hhincome.factor, dishx_any, dishx_diabetes, diabetes_cat, educ_years, evertb, smear_grade, xray_cavit, smokhx, alcoholhx, drughx, hiv, nat2_cat) %>% 
+  tbl_summary(missing="ifany", by=r01) %>% 
+  add_n() %>% 
+  add_p() %>% 
+  bold_labels()
+```
+
+#### HIV-related characteristics 
+
+```{r}
+dissertation_data %>% 
+  filter(hiv==1) %>% 
+  select(r01, cd4_count, viral_load, art_experienced, art_reg_cat) %>% 
+  tbl_summary(missing="ifany", by=r01) %>% 
+  add_n() %>% 
+  add_p() %>% 
+  bold_labels()
+
+```
+
+#### Disease history 
+
+```{r}
+dissertation_data %>% 
+  select(r01, contains("dishx")) %>% 
+  tbl_summary(missing="ifany", by=r01) %>% 
+  add_n() %>% 
+  add_p() %>% 
+  bold_labels()
+```
+
+**Other disease history**
+```{r}
+data %>% 
+  filter(dishx_other==1) %>% 
+  group_by(diseasehx_other) %>% 
+  count() %>% 
+  print(n=Inf)
+
+with(data, tab(dishx_any, dishx_any_minus))
+```
+
+
+## WHO TB treatment outcome definitions
+
+- *Treatment completion*: Completion of treatment without evidence of failure, but without documentation of a negative sputum smear or culture in the last month of treatment and/or on at least one previous occasion, either because tests were not done or because results are unavailable
+- *Cure*: Bacteriologic confirmation of a negative smear or culture at the end of TB treatment and on at least one previous occasion
+- *Treatment success*: Composite of cured and treatment completed
+- *Treatment failure*: Sputum smear or culture is positive at month 5 or later during treatment
+- *Death*: TB patient who dies for any reason before starting or during the course of treatment
+- *Regimen switch*: switch to a second line TB treatment regimen
+- *Default / Treatment incomplete (WHO calls this LTF)*: TB patient who did not start treatment or whose treatment was interrupted for 2 consecutive months or more 
+- *Not evaluated*: TB patient for whom no treatment outcome was assigned, which includes cases who "transferred out" to another treatment unit as well as cases for whom the treatment outcome is unknown to the reporting unit
+
+
+### "Unsuccessful" TB treatment outcome
+
+The main outcome for this project is **successful treatment vs. unsuccessful treatment**. As noted above, treatment success is the combination of treatment completion and cure. Unsuccessful treatment is the combination of treatment failure, death during treatment, default, and not evaluated. 
+
+Updated 9/17/2020 - we will add switch to drug resistant regimen as a unsuccessful outcome. This is not explicitly stated as an unsuccessful outcome in the WHO definition, but should be considered as one. Actually, WHO definition says people should be excluded from analysis if they switch to second line regimen, but that is not an appropriate method for prediction modeling. 
+
+```{r}
+data %>% 
+  select(outcome_cat, unsuccessful, tto_outcome) %>% 
+  tbl_summary(by=unsuccessful) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+  add_overall()
+
+```
+
+#### Timing of outcomes
+
+Time to outcome is defined as the time between treatment initiation and event. If participants abandoned treatment or were lost to follow-up, their duration of follow-up is calculated as the midpoint of their last attended and first missed visits. 
+
+```{r}
+data %>% 
+  select(outcome_cat, tto_outcome) %>% 
+    tbl_summary(by=outcome_cat, missing="no") %>% 
+    add_n() %>% 
+    bold_labels()
+```
+
+
+## Variables
+
+The dataset contains information on the following variables. 
+
+```{r }
+d <- describe(data)
+html(d, size=80, scroll=TRUE, col='80%', row=50)
+```
+
+
+**Systematic reivew results**
+Based on results from my systematic review, the most frequently considered predictors of TB treatment outcomes were: 
+
+- Age
+- Sex
+- Extrapulmonary TB
+- BMI
+- Xray findings
+- Previous TB
+- HIV
+
+Surprisingly, smear result was considered 24 times, but only included in 6 of those models and likely not an important predictor in light of other variables. 
+
+**PI survey**
+
+I also surveyed the RePORT Brazil PIs about the relative importance of predictors for TB treatment outcomes. 
+The results from that survey indicate that clinical
+
+Variables where 4/5 all people thought it was somewhat or very important include: 
+
+
+- HIV (4/1) and also CD4 count (4/1), timing of ART (3/2), viral load (2/3), and ART regimen (2/3) among PLWH
+- Diabetes categorized from HbA1c (4/1)
+- Hemoglobin (4/1)
+- Anemia, categorized from hemoglobin (4/1)
+- History of TB (4/1)
+- EPTB (3/2)
+- Diabetes based on HbA1c, continuous (3/2)
+- BMI (4/0)
+- Alcohol use (3/1)
+- Chronic disease comorbidity (2/2)
+- Cavitation (2/2)
+- Tobacco use (2/2)
+- Drug use (2/2)
+- Age (2/2)
+- History of diabetes (2/2)
+- Sex (1/3)
+
+
+
+In open ended questions, they reported that symptoms, other than cough duration and weight loss were not very important. 
+Regarding additional variables, adherence was noted as important, but would not be available until 2 months
+
+When asked what the most important predictors of treatment failure, commonly reported variables include: burden of disease at baseline, HIV, BMI, re-treatment, diabetes and other comorbidities. These responses were largely consistent with above. Losses to follow-up, however, were believed to be more related to substance use (alcohol and drugs), low education, and high pill burden (HIV)
+
+
