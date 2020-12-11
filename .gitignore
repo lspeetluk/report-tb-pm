@@ -1,6 +1,0 @@
-# Exclude everything
-*
-
-!manuscript_functions.R
-!report_tb_pm_analysis.Rmd
-!report_tb_pm_supplement.Rmd
