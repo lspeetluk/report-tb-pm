@@ -1,5 +1,5 @@
 # Exclude everything
-Manuscript/*
+*
 
 !manuscript_functions.R
 !report_tb_pm_analysis.Rmd
