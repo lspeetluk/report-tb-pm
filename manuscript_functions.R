@@ -53,11 +53,21 @@ mode <- function(x) {
 #' validation_results: results from "lrm" validate function
 
 save_val_results <- function(validation_results){
+  
   brier <- validation_results["B", "index.orig"]
   slope <- validation_results["Slope", "index.orig"]
   intercept <- validation_results["Intercept", "index.orig"]
   
-  save_results <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+  brier.corr <- validation_results["B", "index.corrected"]
+  slope.corr <- validation_results["Slope", "index.corrected"]
+  intercept.corr <- validation_results["Intercept", "index.corrected"]
+  
+  save_results.app <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+  save_results.corr <- rbind("Brier score" = brier.corr, "Calibration slope" = slope.corr, "Calibration intercept" = intercept.corr)
+  
+  save_results <- cbind("apparent" = save_results.app, "corrected" = save_results.corr)
+  
+  colnames(save_results) <- c("apparent", "corrected")
   
   return(save_results)
   
@@ -722,8 +732,7 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   #------- Selected model
   # Extract names of variables retained in selected model
   selected_vars_int <- raw_table %>% filter(coef_selected_model!=0) %>% pull(variable)
-  #selected_vars_int <- names(coef_selected_model[which(coef_selected_model!=0)]) # old code
-  selected_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|55+", "", selected_vars_int)
+  selected_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|[55+]", "", selected_vars_int)
   selected_vars_int <- gsub(")age|)age'", ")", selected_vars_int)
   selected_vars_int <- gsub("4)'", "4)", selected_vars_int)
   selected_vars_int <- unique(selected_vars_int)
@@ -743,8 +752,7 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   
   # Extract names of variables retained in boot model
   boot_vars_int <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
-  # boot_vars_int <- names(coef_boot_median[which(coef_boot_median!=0)])
-  boot_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|55+", "", boot_vars_int)
+  boot_vars_int <- gsub("Former|Never|Current|Under|Normal|Over|25-35|35-45|45-55|[55+]", "", boot_vars_int)
   boot_vars_int <- gsub(")age|)age'", ")", boot_vars_int)
   boot_vars_int <- gsub("4)'", "4)", boot_vars_int)
   boot_vars_int <- unique(boot_vars_int)
@@ -791,11 +799,8 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   # Performance
   shrink_perf <- ev_glm(method="original", lp="predvals_shrink", outcome="outcome", data=data, samples=200, return="performance")
   
-  brier <- shrink_perf["Brier", "apparent"]
-  slope <- shrink_perf["Slope", "apparent"]
-  intercept <- shrink_perf["Intercept", "apparent"]
-  
-  perf_shrink<- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+  perf_shrink <- shrink_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+  rownames(perf_shrink) <- c("Brier score", "Calibration slope", "Calibration intercept")
   
   c_shrink <- c_ci(predvals_shrink, outcome_vector)
   
@@ -820,11 +825,9 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   # Performance
   approx_perf <- ev_glm(method="original", lp="predvals_approx_mod", outcome="outcome", data=data, samples=200, return="performance")
   
-  brier <- approx_perf["Brier", "apparent"]
-  slope <- approx_perf["Slope", "apparent"]
-  intercept <- approx_perf["Intercept", "apparent"]
+  perf_approx_model <- approx_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+  rownames(perf_approx_model) <- c("Brier score", "Calibration slope", "Calibration intercept")
   
-  perf_approx_model <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
   c_approx_model <- c_ci(predvals_approx_mod, outcome_vector)
   
   
@@ -876,7 +879,7 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
     select(model, c_ci)
   
   #--- Brier score, slope, and intercept ---
-  performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_model, perf_shrink, perf_approx_model)))
+  performance_list <- as.data.frame(t(cbind(perf_full_model[,"corrected"], perf_selected_model[,"corrected"], perf_boot_model[,"corrected"], perf_shrink[,"corrected"], perf_approx_model[,"corrected"])))
   
   rownames(performance_list) <- c("full_model", "selected_model",  "boot_model", "shrink", "approx")
   

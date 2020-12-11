@@ -35,17 +35,16 @@ knitr::opts_chunk$set(
 
 # Set global gtsmmary options
 options(gtsummary.as_gt.addl_cmds = "gt::tab_options(table.font.size = 'small', data_row.padding = gt::px(1))")
-
-# Load dataset
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata") # original dataset with misssing
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata") # mi_sum dataset based on summarized imputation
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata") # mi_long dataset based on summarized imputation
-
 ```
 
 `r hidingTOC(buttonLabel="Outline", levels=2)`
 
 ```{r}
+# Load dataset
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata") # original dataset with misssing
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata") # mi_sum dataset based on summarized imputation
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata") # mi_long dataset based on summarized imputation
+
 # Load functions
 source(here("Manuscript", "manuscript_functions.R"))
 
@@ -90,7 +89,8 @@ save_results_all <- model_development(data=mi_sum,
                                   outcome=mi_sum$unsuccessful, 
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
-                                  bootstraps=500, 
+                                  bootstraps=500,                                    
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -114,7 +114,7 @@ save_results_all$models_performance
 ```
 
 
-## Boot50 model 
+## Boot model 
 
 ### C-statistics
 ```{r}
@@ -138,7 +138,7 @@ boot_val
 
 ### Calibration Plot
 ```{r}
-save_results_all$boot50_calibration
+save_results_all$boot_calibration
 ```
 
 
@@ -247,7 +247,11 @@ save_results_complete_case <- model_development(data=complete_case,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
+
+save_results_complete_case$`raw_overview `
+
 ```
 
 ## Imputatation 1 
@@ -265,6 +269,7 @@ save_results_imputation1 <- model_development(data=imputation1,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -284,6 +289,7 @@ save_results_imputation2 <- model_development(data=imputation2,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 
 ```
@@ -304,6 +310,7 @@ save_results_imputation3 <- model_development(data=imputation3,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -323,6 +330,7 @@ save_results_imputation4 <- model_development(data=imputation4,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60, 
                                   seed=SEED)
 
 ```
@@ -343,6 +351,7 @@ save_results_imputation5 <- model_development(data=imputation5,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -362,6 +371,7 @@ save_results_imputation6 <- model_development(data=imputation6,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 
 ```
@@ -382,6 +392,7 @@ save_results_imputation7 <- model_development(data=imputation7,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 
 ```
@@ -402,6 +413,7 @@ save_results_imputation8 <- model_development(data=imputation8,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 
 ```
@@ -422,6 +434,7 @@ save_results_imputation9 <- model_development(data=imputation9,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -441,6 +454,7 @@ save_results_imputation10 <- model_development(data=imputation10,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
+                                  threshold=60,
                                   seed=SEED)
 ```
 
@@ -476,21 +490,21 @@ colnames(selected_models) <- col_names
 boot_medians <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_boot_median)])  %>%  reduce(left_join, by = "variable")
 colnames(boot_medians) <- col_names
 
-# Boot50 model variables and coefficients  
-boot50_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_boot50_model)])  %>%  reduce(left_join, by = "variable")
-colnames(boot50_models) <- col_names
+# boot model variables and coefficients  
+boot_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_boot_model)])  %>%  reduce(left_join, by = "variable")
+colnames(boot_models) <- col_names
 
-# Shrunken coefficients (from boot50 model) 
+# Shrunken coefficients (from boot model) 
 shrink_models <- lapply(results, function(x) x$coefficients_table[Cs(variable, coef_shrink)]) %>%  reduce(left_join, by = "variable")
 colnames(shrink_models) <- col_names
 ```
 
 
-### AUC from full and boot50 models
+### AUC from full and boot models
 
 ```{r}
 # AUCs
-auc_full <- lapply(results, function(x) x$c_statistics[Cs(full_model, boot50_model)]) 
+auc_full <- lapply(results, function(x) x$c_statistics[Cs(full_model, boot_model)]) 
 auc_full                                 
 ```
 
@@ -522,7 +536,7 @@ full_models
 #### Boot 50 models
 
 ```{r}
-boot50_models
+boot_models
 ```
 
 #### Selected models
@@ -548,15 +562,15 @@ imputation_results <- createWorkbook()
 addWorksheet(imputation_results, "Full model coefficients")
 addWorksheet(imputation_results, "Selected coefficients")
 addWorksheet(imputation_results, "Bootstrap coefficients")
-addWorksheet(imputation_results, "Boot50 model coefficients")
-addWorksheet(imputation_results, "Boot50-shrink coefficients")
+addWorksheet(imputation_results, "Boot model coefficients")
+addWorksheet(imputation_results, "Boot-shrink coefficients")
 
 # Write the data to the sheets
 writeData(imputation_results, sheet = "Full model coefficients", x = full_models)
 writeData(imputation_results, sheet = "Selected coefficients", x = selected_models)
 writeData(imputation_results, sheet = "Bootstrap coefficients", x = boot_medians)
-writeData(imputation_results, sheet = "Boot50 model coefficients", x = boot50_models)
-writeData(imputation_results, sheet = "Boot50-shrink coefficients", x = shrink_models)
+writeData(imputation_results, sheet = "Boot model coefficients", x = boot_models)
+writeData(imputation_results, sheet = "Boot-shrink coefficients", x = shrink_models)
 
 # Export the file
 saveWorkbook(imputation_results, here("Manuscript", "tables", "imputation_results.xlsx"), overwrite=TRUE)

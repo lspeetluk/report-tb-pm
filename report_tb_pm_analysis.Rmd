@@ -53,9 +53,6 @@ knitr::opts_chunk$set(
 
 # Set global gtsmmary options
 options(gtsummary.as_gt.addl_cmds = "gt::tab_options(table.font.size = 'small', data_row.padding = gt::px(1))")
-
-# Load dataset
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata")
 ```
 
 `r hidingTOC(buttonLabel="Outline", levels=2)`
@@ -63,8 +60,11 @@ load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp
 # Functions 
 
 ```{r}
+# Load dataset
+load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp.Rdata")
+
 # Load functions
-source(here("Manuscript", "manuscript_functions.R"))
+source(here("manuscript_functions.R"))
 ```
 
 
@@ -412,84 +412,177 @@ raw_table <- as.data.frame(main_results$raw_overview) %>% rownames_to_column("va
 # Save coefficients from selected model and boot medians
 coef_selected_model <- main_results$raw_overview[,"sel_est"]
 coef_boot_median <- main_results$raw_overview[,"boot_median"]
-
-
-# Added 12/4
-threshold <- 80
-
-boot60_vars <- as.data.frame(main_results$raw_overview) %>% 
-  rownames_to_column("variable") %>% 
-  filter(boot_inclusion>=threshold) %>% 
-  pull(variable)
-
-boot60_vars
 ```
 
 
 ## Bootstrap selected model ("boot" model)
 
-The main ("final") model, based on variables that were selected in at least 50% of bootstrap samples. 
-
-The c-statistic of this model is: 
+### 50% threshold
 
 ```{r}
+# Set inclusion threshold 
+threshold = 50
+
+# Extract names of variables retained in boot model based on threshold above
+boot_vars_50 <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
+boot_vars_50 <- gsub("Former|Never|Current|25-35|35-45|45-55|[55+]", "", boot_vars_50)
+boot_vars_50 <- unique(boot_vars_50)
+boot_vars_50 <- boot_vars_50[-1]
+boot_vars_50
+
+# Boot model formula
+boot_form_50 <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_50, collapse = "+"))))
+
+# Boot model
+boot_model_50 <- lrm(boot_form_50, data = mi_sum, x = T, y = T)
+
+# Boot model validation
+boot_val_50 <- validate(boot_model_50, B=200, seed=SEED)
+
+# Coefficients from the model refit including only variables from the 50% or more boostraps
+coef_boot_vars_50 <- boot_model_50$coefficients
+
+
+# C statistic (apparent and internally validated)
+c_stat_ci(boot_model_50, data=mi_sum, samples=2000)
+
+# Slope and intercept
+save_val_results(boot_val_50)
+
+# Calibration plot
+plot(calibrate(boot_model_50, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+```
+
+
+### 60% threshold
+
+```{r}
+# Set inclusion threshold
 threshold = 60
 
 # Extract names of variables retained in boot model based on threshold above
-boot_vars_int <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
-boot_vars_int <- gsub("Former|Never|Current|25-35|35-45|45-55|55+", "", boot_vars_int)
-boot_vars_int <- unique(boot_vars_int)
-boot_vars <- boot_vars_int[-1]
+boot_vars_60 <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
+boot_vars_60 <-  gsub("Former|Never|Current|25-35|35-45|45-55|[55+]", "", boot_vars_60)
+boot_vars_60 <- unique(boot_vars_60)
+boot_vars_60 <- boot_vars_60[-1]
+boot_vars_60
 
 # Boot model formula
-boot_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+"))))
+boot_form_60 <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_60, collapse = "+"))))
 
 # Boot model
-boot_model <- lrm(boot_form, data = mi_sum, x = T, y = T)
+boot_model_60 <- lrm(boot_form_60, data = mi_sum, x = T, y = T)
 
 # Boot model validation
-boot_val <- validate(boot_model, B=200, seed=SEED)
+boot_val_60 <- validate(boot_model_60, B=200, seed=SEED)
 
-# Coefficients from the model refit including only variables from the 50% or more boostraps
-coef_boot_vars <- boot_model$coefficients
+# Coefficients from the model refit including only variables from the 60% or more boostraps
+coef_boot_vars_60 <- boot_model_60$coefficients
+
+
+# C statistic (apparent and internally validated)
+c_stat_ci(boot_model_60, data=mi_sum, samples=2000)
+
+# Slope and intercept
+save_val_results(boot_val_60)
+
+# Calibration plot
+plot(calibrate(boot_model_60, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
 ```
 
 
-### Performance 
+### 70% threshold
 
-Brier score, calibration slope, and calibration intercept of the full model:
- 
 ```{r}
-perf_boot_model <- save_val_results(boot_val)
-perf_boot_model
+# Set inclusion threshold 
+threshold = 70
+
+# Extract names of variables retained in boot model based on threshold above
+boot_vars_70 <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
+boot_vars_70 <-  gsub("Former|Never|Current|25-35|35-45|45-55|[55+]", "", boot_vars_70)
+boot_vars_70 <- unique(boot_vars_70)
+boot_vars_70 <- boot_vars_70[-1]
+boot_vars_70
+
+# Boot model formula
+boot_form_70 <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_70, collapse = "+"))))
+
+# Boot model
+boot_model_70 <- lrm(boot_form_70, data = mi_sum, x = T, y = T)
+
+# Boot model validation
+boot_val_70 <- validate(boot_model_70, B=200, seed=SEED)
+
+# Coefficients from the model refit including only variables from the 70% or more boostraps
+coef_boot_vars_70 <- boot_model_70$coefficients
+
+# C statistic (apparent and internally validated)
+c_stat_ci(boot_model_70, data=mi_sum, samples=2000)
+
+# Performance measures
+save_val_results(boot_val_70)
+
+# Calibration plot
+plot(calibrate(boot_model_70, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
 ```
 
-CI for apparent c-statistic 
+80% threshold would be same as 70%
+
+### 90% threshold
 
 ```{r}
-# Predicted values 
+# Set inclusion threshold 
+threshold = 90
+
+# Extract names of variables retained in boot model based on threshold above
+boot_vars_90 <- raw_table %>% filter(boot_inclusion >= threshold) %>% pull(variable)
+boot_vars_90 <-  gsub("Former|Never|Current|25-35|35-45|45-55|[55+]", "", boot_vars_90)
+boot_vars_90 <- unique(boot_vars_90)
+boot_vars_90 <- boot_vars_90[-1]
+
+# Boot model formula
+boot_form_90 <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_90, collapse = "+"))))
+
+# Boot model
+boot_model_90 <- lrm(boot_form_90, data = mi_sum, x = T, y = T)
+
+# Boot model validation
+boot_val_90 <- validate(boot_model_90, B=200, seed=SEED)
+
+# Coefficients from the model refit including only variables from the 90% or more boostraps
+coef_boot_vars_90 <- boot_model_90$coefficients
+
+# C statistic (apparent and internally validated)
+c_stat_ci(boot_model_90, data=mi_sum, samples=2000)
+
+# Performance measures
+save_val_results(boot_val_90)
+
+# Calibration plot
+plot(calibrate(boot_model_90, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+```
+
+
+### Decision
+
+Based on the comparisons above, and based on the literature, I believe a 70% threshold is best trade-off between parsimony and performance. 
+
+```{r}
+# Set general terms based on threshold
+boot_vars <- boot_vars_70
+boot_model <- boot_model_70
+boot_val <- boot_val_70
+coef_boot_vars <- coef_boot_vars_70
 predvals_boot <- predict(boot_model)
-mi_sum$predvals_boot <- predvals_boot 
-
 c_boot_model <- c_ci(predvals_boot, outcome_vector)
-c_boot_model
-```
+perf_boot_model <- save_val_results(boot_val_70)
 
+# Coefficients and standard errors
+boot_est <- coef(boot_model)
+boot_var <- diag(boot_model$var)
+boot_se <- sqrt(boot_var)
 
-### Internal validation 
-
-```{r}
-c_stat_ci(boot_model, data=mi_sum, samples=2000)
-```
-
-
-### Calibration plot 
-
-
-The calibration curve from Frank Harrell's package is: 
-```{r}
-# Calibration curve
-plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+boot_coef_se <- as.data.frame(cbind(boot_est, boot_se)) %>% rownames_to_column("variable")
 ```
 
 
@@ -500,14 +593,13 @@ I also wrote a code that constructs a calibration plot, but does not include bia
 cal_plot_solo(mi_sum, predvals_boot, outcome_vector)
 ```
 
-**More validation measures**
+**All validation measures**
 
 ```{r}
 boot_val
 ```
 
-
-### ROC curve
+#### ROC curve
 
 ```{r}
 # Predicted risk
@@ -518,10 +610,33 @@ mi_sum$predrisk_boot = predrisk_boot
 roc <- roc(mi_sum, unsuccessful, predrisk_boot, ci=TRUE)
 roc 
 
+# Output plot
 plot(roc)
 plot(ci.thresholds(roc), type="shape", col="lightblue")
 plot(roc, add=TRUE)
+
+# Export  to jpeg
+jpeg(here("images", "roc_curve_boot.jpeg"), width=300, height=300)
+plot(roc)
+plot(ci.thresholds(roc), type="shape", col="lightblue")
+plot(roc, add=TRUE)
+dev.off()
 ```
+
+
+```{r}
+# Save calibration plot
+jpeg(here("images", "cal_plot_boot.jpeg"), width=450, height=450)
+plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+dev.off()
+
+
+# Alternative calibration plot
+jpeg(here("images", "cal_plot_boot_v2.jpeg"), width=450, height=450)
+cal_plot_solo(mi_sum, predvals_boot, outcome_vector)
+dev.off()
+```
+
 
 **Hosmer-Lemeshow test**
 ```{r}
@@ -559,14 +674,12 @@ Brier score, calibration slope, and calibration intercept of the shrunken model:
 ```{r}
 shrink_perf <- ev_glm(method="original", lp="predvals_shrink", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
 
-brier <- shrink_perf["Brier", "apparent"]
-slope <- shrink_perf["Slope", "apparent"]
-intercept <- shrink_perf["Intercept", "apparent"]
+perf_shrink <- shrink_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+rownames(perf_shrink) <- c("Brier score", "Calibration slope", "Calibration intercept")
 
-perf_shrink<- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
+
 perf_shrink
 ```
-
 
 CI for apparent c-statistic 
 
@@ -585,13 +698,13 @@ cal_plot_solo(mi_sum, predvals_shrink, outcome_vector)
 
 ### ROC curve
 
-
 ```{r}
 plot(ev_glm(method="original", lp="predvals_shrink", outcome="unsuccessful", data=mi_sum, samples=1, return="roc"))
-
+plot(roc(outcome_vector, predvals_shrink))
 ```
 
 This is similar to the ROC curve from the non-shrunk values (coefficients from boot vars model)
+
 
 ## Bootstrap medians 
 
@@ -636,11 +749,9 @@ mi_sum %>%
 ```{r}  
 boot_med_perf <- ev_glm(method="original", lp="predvals_boot_median", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
 
-brier <- boot_med_perf["Brier", "apparent"]
-slope <- boot_med_perf["Slope", "apparent"]
-intercept <- boot_med_perf["Intercept", "apparent"]
+perf_boot_median <- boot_med_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+rownames(perf_boot_median) <- c("Brier score", "Calibration slope", "Calibration intercept")
 
-perf_boot_median <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
 perf_boot_median
 ```
 
@@ -716,11 +827,9 @@ Brier score, calibration slope, and calibration intercept of the model:
 ```{r}
 lasso_min_perf <- ev_glm(method="original", lp="predvals_lasso_min", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
 
-brier <- lasso_min_perf["Brier", "apparent"]
-slope <- lasso_min_perf["Slope", "apparent"]
-intercept <- lasso_min_perf["Intercept", "apparent"]
+perf_lasso_min <- lasso_min_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+rownames(perf_lasso_min) <- c("Brier score", "Calibration slope", "Calibration intercept")
 
-perf_lasso_min <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
 perf_lasso_min
 ```
 
@@ -780,11 +889,9 @@ Brier score, calibration slope, and calibration intercept of the full model:
 ```{r}
 lasso_1se_perf <- ev_glm(method="original", lp="predvals_lasso_1se", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
 
-brier <- lasso_1se_perf["Brier", "apparent"]
-slope <- lasso_1se_perf["Slope", "apparent"]
-intercept <- lasso_1se_perf["Intercept", "apparent"]
+perf_lasso_1se <- lasso_1se_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+rownames(perf_lasso_1se) <- c("Brier score", "Calibration slope", "Calibration intercept")
 
-perf_lasso_1se <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
 perf_lasso_1se
 ```
 
@@ -861,11 +968,9 @@ Brier score, calibration slope, and calibration intercept of the model:
 ```{r}
 approx_perf <- ev_glm(method="original", lp="predvals_approx_mod", outcome="unsuccessful", data=mi_sum, samples=200, return="performance")
 
-brier <- approx_perf["Brier", "apparent"]
-slope <- approx_perf["Slope", "apparent"]
-intercept <- approx_perf["Intercept", "apparent"]
+perf_approx_model <- approx_perf[Cs(Brier, Intercept, Slope), Cs(apparent, corrected)]
+rownames(perf_approx_model) <- c("Brier score", "Calibration slope", "Calibration intercept")
 
-perf_approx_model <- rbind("Brier score" = brier, "Calibration slope" = slope, "Calibration intercept" = intercept)
 perf_approx_model
 ```
 
@@ -909,7 +1014,6 @@ selected_model <- lrm(selected_form, data = mi_sum, x = T, y = T)
 
 predvals_selected_model <- predict(selected_model)
 
-# Model performance selected model - don't need to output because its the same as the boot model, but want to store for table
 c_selected_model <- c_ci(predvals_selected_model, outcome_vector)
 
 selected_model_val <- validate(selected_model)
@@ -974,7 +1078,7 @@ c_stats <- c_stat_list %>%
   select(model, c_ci)
 
 #--- Brier score, slope, and intercept ---
-performance_list <- as.data.frame(t(cbind(perf_full_model, perf_selected_model, perf_boot_median, perf_boot_model, perf_shrink, perf_approx_model, perf_lasso_min, perf_lasso_1se)))
+performance_list <- as.data.frame(t(cbind(perf_full_model[,"corrected"], perf_selected_model[,"corrected"], perf_boot_median[,"corrected"], perf_boot_model[,"corrected"], perf_shrink[,"corrected"], perf_approx_model[,"corrected"], perf_lasso_min[,"corrected"], perf_lasso_1se[,"corrected"])))
 
 rownames(performance_list) <- c("full_model", "selected_model", "boot_median", "boot_model", "shrink", "approx", "lambda_min", "lambda_1se")
 
@@ -998,47 +1102,34 @@ t_model_performance <- as.data.frame(t(models_performance)) %>% rownames_to_colu
 
 ## Main results
 
-### Classification table
+### Risk table
 
 Based on coefficients from the boot model, here is a classification table broken down by deciles. 
 Each row denotes the classification values for people above that decile are considered as "unsuccessful" (positive) outcome vs. "successful" (negative) outcome. 
 
 
 ```{r}
-# Positive = unsuccessful 
-# Negative = successful 
+mi_sum$predvals_boot <- predvals_boot
 
-n_total = nrow(mi_sum)
-all_positive = nrow(filter(mi_sum, unsuccessful==1))
-all_negative = nrow(filter(mi_sum, unsuccessful==0))
+n_tot = dim(mi_sum)[1]
 
-classification_table <- mi_sum %>% 
-  mutate(risk_group = ntile(predvals_boot, 10)) %>% 
+risk_groups <- mi_sum %>% 
+  mutate(risk_group = cut(predrisk_boot,
+                       breaks = c(0, .10, 0.2, 100),
+                       labels= c("Low risk", "Medium risk", "High risk"))) %>%
   group_by(risk_group) %>% 
   summarize(
-    n_group = n(), 
+    min_score = min(predvals_boot),
+    max_score = max(predvals_boot),
+    risk_cut_off = max(predvals_boot),
+    n_group = n(),
+    prop_group = n_group/n_tot,
     outcome = sum(unsuccessful),
-    no_outcome = n_group-outcome,
     obs_prob_outcome = mean(unsuccessful),
-    pred_prob_outcome = mean(predvals_boot),
-    min_pred_val = min(predvals_boot),
-    max_pred_val = max(predvals_boot)) %>% 
-  mutate(n_below_cut_off = cumsum(n_group),
-         perc_below_cut_off = n_below_cut_off/n_total,
-         cm_outcome = cumsum(outcome),
-         cm_no_outcome =cumsum(no_outcome),
-         tp = all_positive - cm_outcome,
-         tn = cm_no_outcome,
-         fp = all_negative - cm_no_outcome,
-         fn = cm_outcome,
-         sensitivity = tp/(tp+fn),
-         specificity = tn/(tn+fp),
-         ppv = tp/(tp+fp),
-         npv = tn/(tn+fn)) %>% 
-  select(risk_group, max_pred_val, n_below_cut_off, perc_below_cut_off, cm_outcome, cm_no_outcome, tp, tn, fp, fn, sensitivity, specificity, ppv, npv)
-    
+    pred_prob_outcome = mean(predrisk_boot))
 
-classification_table
+ 
+risk_groups
 ```
 
 ### Nomogram
@@ -1050,7 +1141,7 @@ options(datadist="dd")
 
 boot_model$coefficients
 
-boot_model <- Newlabels(boot_model, c("Hemoglobin (g/dL)", "HIV", "Drug use", "Diabetes", "Age group", "Education (years)", "Tobacco use", "Female sex", "BMI",  "Smear positive", "Non-white"))
+boot_model <- Newlabels(boot_model, c("Hemoglobin (g/dL)", "HIV", "Drug use", "Diabetes", "Age group", "Education (years)", "Tobacco use"))
 
 nom <- nomogram(boot_model, 
                 fun=plogis,
@@ -1058,7 +1149,15 @@ nom <- nomogram(boot_model,
                 funlabel="Risk of unsuccessful outcome",
                 vnames="labels")
 
+# Plot
 plot(nom)
+
+
+# Save plot
+jpeg(here("images", "nomogram.jpeg"), width=700, height=500)
+plot(nom)
+dev.off()
+
 ```
 
 
@@ -1104,6 +1203,11 @@ graph <- graph_data %>%
     axis.line = element_line(colour = "black"))
   
 graph
+
+# Save plot
+jpeg(here("images", "risk_plot.jpeg"), width=400, height=400)
+graph
+dev.off()
 ```
 
 
@@ -1120,17 +1224,19 @@ results <- createWorkbook()
 # Add some sheets to the workbook
 addWorksheet(results, "Model-Selection")
 addWorksheet(results, "Coefficients")
+addWorksheet(results, "Final-Model")
 addWorksheet(results, "Performance")
-addWorksheet(results, "Classification-Table")
+addWorksheet(results, "Risk-Table")
 
 # Write the data to the sheets
-writeData(results, sheet = "Model-Selection", x = overview)
+writeData(results, sheet = "Model-Selection", x = raw_table)
 writeData(results, sheet = "Coefficients", x = coefficients)
+writeData(results, sheet= "Final-Model", x = boot_coef_se)
 writeData(results, sheet = "Performance", x = performance)
-writeData(results, sheet = "Classification-Table", x=classification_table)
+writeData(results, sheet = "Risk-Table", x=risk_groups)
 
 # Export the file
-saveWorkbook(results, here("Manuscript", "tables", "main_analyses_results.xlsx"), overwrite=TRUE)
+saveWorkbook(results, here("tables", "main_analyses_results.xlsx"), overwrite=TRUE)
 ```
 
 
@@ -1150,7 +1256,7 @@ save_results_all <- model_development(data=mi_sum,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=500, 
-                                  threshold=50,
+                                  threshold=70,
                                   seed=SEED)
 
 
@@ -1170,28 +1276,28 @@ save_results_all$c_statistics
 save_results_all$boot_calibration
 ```
 
+
+```{r}
+save.image(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/tb_pm_analysis_files")
+```
+
+
+
 # Added value
 
 
 ### NAT2
 
-```{r, eval=FALSE, include=FALSE}
-
-# START HERE FOR ADDED VALUE ANALYSIS AFTER RUNNING FUNCTIONS AND LOADING LSP DATA
-
-# Save datasets
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.Rdata")
-load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata")
-
+```{r, include=FALSE}
 # Add NAT2 data to imputed analysis data
 nat2_data <- data %>% 
   select(subjid, nat2_cat)
 
-mi_sum <- mi_sum %>% 
+mi_sum2 <- mi_sum %>% 
   left_join(nat2_data, by="subjid")
 
 # Create age groups
-mi_sum <- mi_sum %>% 
+mi_sum2 <- mi_sum2 %>% 
   mutate(age_group = fct_case_when(
     age < 25 ~ "<25",
     age >= 25 & age <35 ~ "25-35",
@@ -1200,11 +1306,11 @@ mi_sum <- mi_sum %>%
     age >= 55 ~ "55+"
   ))
 
-mi_sum %>% 
+mi_sum2 %>% 
   tbl_cross(nat2_cat, outcome_cat,
             percent="row")
 
-mi_sum %>% 
+mi_sum2 %>% 
   tbl_cross(nat2_cat, unsuccessful,
             percent="col")
 ```
@@ -1212,15 +1318,17 @@ mi_sum %>%
 
 
 ```{r}
-base_model <- lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group, data=mi_sum)
+base_model <- boot_model
 
 # ---- Outcome -----
-y = mi_sum$unsuccessful
+y = mi_sum2$unsuccessful
 ```
 
 
 ```{r}
-add_nat2 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + nat2_cat, data=mi_sum) 
+add_nat2_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+")), "+ nat2_cat"))
+
+add_nat2 <-  lrm(add_nat2_form, data=mi_sum2) 
 
 # Added value function
 add_nat2_results <- added_value(base_model, add_nat2, y)
@@ -1313,6 +1421,7 @@ data_with_missing <- analysis_data %>%
        hiv==0 | is.na(hiv) ~ "HIV negative",
        cd4_count>=200 ~ "CD4 >=200",
        cd4_count <200 ~ "CD4 <200"),
+    vl_all = ifelse(is.na(viral_load), 0, viral_load), 
     vl_gt200_all = fct_case_when( # Viral suppression = viral load < 200
        hiv==0 | is.na(hiv) ~ "HIV negative",
        viral_load <200 ~ "VL <200",
@@ -1329,6 +1438,7 @@ data_to_analyze <- data_to_analyze %>%
        hiv==0 | is.na(hiv) ~ "HIV negative",
        cd4_count>=200 ~ "CD4 >=200",
        cd4_count <200 ~ "CD4 <200"),
+    vl_all = ifelse(is.na(viral_load), 0, viral_load), 
     vl_gt200_all = fct_case_when( # Viral suppression = viral load < 200
        hiv==0 | is.na(hiv) ~ "HIV negative",
        viral_load <200 ~ "VL <200",
@@ -1339,13 +1449,13 @@ Comparison of the distribution of HIV related variables before and after imputat
 ```{r}
 data_with_missing %>% 
   filter(hiv==1) %>% 
-  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, unsuccessful) %>% 
+  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, vl_all, unsuccessful) %>% 
   tbl_summary(by="unsuccessful") %>% 
   add_overall()
 
 data_to_analyze %>% 
   filter(hiv==1) %>% 
-  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, unsuccessful) %>% 
+  select(all_of(hiv_vars), cd4_lt200_all, vl_gt200_all, vl_all, unsuccessful) %>% 
   tbl_summary(by='unsuccessful') %>% 
   add_overall()
 ```
@@ -1356,7 +1466,9 @@ data_to_analyze %>%
 full_model_lrm <- lrm(model_formula, data=mi_sum, x=TRUE, y=TRUE)
 full_model_glm <- glm(model_formula, data = mi_sum, family="binomial", x = T, y = T)
 
-# boot model formula
+
+boot_form <- boot_model$sformula
+
 boot_model_lrm <-  lrm(boot_form, data=mi_sum, x=TRUE, y=TRUE)
 boot_model_glm <-  glm(boot_form, data = mi_sum, family="binomial", x = T, y = T)
 ```
@@ -1376,7 +1488,11 @@ y = data_to_analyze$unsuccessful
 ### ART
 
 ```{r}
-add_art <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + baseline_art_all, data=data_to_analyze) 
+boot_vars_no_hiv <- boot_vars[!boot_vars %in% "hiv"]
+
+add_art_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_no_hiv, collapse = "+")), "+ baseline_art_all"))
+
+add_art <-  lrm(add_art_form, data=data_to_analyze) 
 
 # Added value function
 add_art_results <- added_value(base_hiv, add_art, y)
@@ -1409,7 +1525,9 @@ add_art_results$table
 Likelihood ratio test: 
 
 ```{r}
-add_cd4 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + cd4_lt200_all, data=data_to_analyze) 
+add_cd4_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_no_hiv, collapse = "+")), "+ cd4_lt200_all"))
+
+add_cd4 <-  lrm(add_cd4_form, data=data_to_analyze)
 
 add_cd4_results <- added_value(base_hiv, add_cd4, y)
 ```
@@ -1438,7 +1556,9 @@ add_cd4_results$table
 ### VL
 
 ```{r}
-add_vl <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + vl_gt200_all, data=data_to_analyze) 
+add_vl_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_no_hiv, collapse = "+")), "+ vl_gt200_all"))
+
+add_vl <-  lrm(add_vl_form, data=data_to_analyze) 
 
 add_vl_results <- added_value(base_hiv, add_vl, y)
 ```
@@ -1488,15 +1608,20 @@ y = cc_analaysis$unsuccessful
 ```
 
 
+### CD4
+
+Likelihood ratio test: 
+
 ```{r}
-add_cd4 <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + cd4_lt200_all, data=cc_analaysis) 
+add_cd4_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_no_hiv, collapse = "+")), "+ cd4_lt200_all"))
+
+add_cd4 <-  lrm(add_cd4_form, data=cc_analaysis)
 
 add_cd4_results <- added_value(base_hiv, add_cd4, y)
 ```
 
 
-Likelihood ratio test:
-
+The likelihood ratio test is: 
 ```{r}
 add_cd4_results$lrtest
 ```
@@ -1518,30 +1643,17 @@ add_cd4_results$table
 
 ### VL
 
-
 ```{r}
-# --- Non missing data ---
-cc_analaysis <- data_with_missing %>% 
-  filter(!is.na(vl_gt200_all))
+add_vl_form <- as.formula(paste0("unsuccessful ~", (paste(boot_vars_no_hiv, collapse = "+")), "+ vl_gt200_all"))
 
-
-# ---- Base model ----
-base_hiv <- lrm(boot_form, data=cc_analaysis)
-
-# ---- Outcome -----
-y = cc_analaysis$unsuccessful
-```
-
-
-
-```{r}
-add_vl <-  lrm(unsuccessful ~ lab_hgb + drughx + educ_years + diabetes_yn + smokhx + bmi + non_white + female + smear_pos + age_group + vl_gt200_all, data=cc_analaysis) 
+add_vl <-  lrm(add_vl_form, data=cc_analaysis) 
 
 add_vl_results <- added_value(base_hiv, add_vl, y)
 ```
 
 
 Likelihood ratio test:
+
 ```{r}
 add_vl_results$lrtest
 ```
@@ -1559,7 +1671,6 @@ Added value table:
 ```{r}
 add_vl_results$table
 ```
-
 
 
 ```{r}
