@@ -1,3 +1,21 @@
+---
+title: "RePORT TB Prediction Model - Supplement"
+author: "Lauren Peetluk"
+date: "`r Sys.Date()`"
+output:
+   
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    number_section: false
+    toc_float:
+      collapsed: true
+    theme: simplex
+    code_folding: hide
+  pdf_document:
+    keep_tex: true
+---
 
 
 ```{r setup, include=FALSE, echo=FALSE, message=FALSE}
@@ -23,7 +41,7 @@ library(ResourceSelection)
 # Ser global markdown options
 options(prType='plain')
 options(digits=3)
-knitrSet(lang='markdown', h=6, w=6)
+knitrSet(lang='markdown', h=6.5, w=6.5)
 
 knitr::opts_chunk$set(
   fig.path = "images/", 
@@ -46,7 +64,7 @@ load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data.R
 load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/imputed_analysis_data_long.Rdata") # mi_long dataset based on summarized imputation
 
 # Load functions
-source(here("Manuscript", "manuscript_functions.R"))
+source(here("manuscript_functions.R"))
 
 # ----- SETUP -----
 
@@ -90,7 +108,7 @@ save_results_all <- model_development(data=mi_sum,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=500,                                    
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -122,13 +140,14 @@ save_results_all$c_statistics
 ```
 
 
-Other model performace measures
+Other model performance measures
 
 ```{r}
-boot_form <- as.formula(unsuccessful ~ lab_hgb + hiv + drughx + diabetes_yn + rcs(age,4) + +educ_years + smokhx + female + bmi + smear_pos + 
-    non_white)
+boot_form <- as.formula(unsuccessful ~ lab_hgb + hiv + drughx + diabetes_yn + rcs(age,4) + +educ_years + smokhx)
 
 boot_model <- lrm(boot_form, data = mi_sum, x = T, y = T)
+
+boot_model
 
 boot_val <- validate(boot_model, B=200, seed=SEED)
 
@@ -182,7 +201,7 @@ writeData(results, sheet = "Coefficients", x = coefficients)
 writeData(results, sheet = "Performance", x = performance)
 
 # Export the file
-saveWorkbook(results, here("Manuscript", "tables", "sensitivity_analyses_results.xlsx"), overwrite=TRUE)
+saveWorkbook(results, here("tables", "sensitivity_analyses_results.xlsx"), overwrite=TRUE)
 ```
 
 
@@ -247,10 +266,8 @@ save_results_complete_case <- model_development(data=complete_case,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
-
-save_results_complete_case$`raw_overview `
 
 ```
 
@@ -269,7 +286,7 @@ save_results_imputation1 <- model_development(data=imputation1,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -289,7 +306,7 @@ save_results_imputation2 <- model_development(data=imputation2,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 
 ```
@@ -310,7 +327,7 @@ save_results_imputation3 <- model_development(data=imputation3,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -330,7 +347,7 @@ save_results_imputation4 <- model_development(data=imputation4,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60, 
+                                  threshold=70, 
                                   seed=SEED)
 
 ```
@@ -351,7 +368,7 @@ save_results_imputation5 <- model_development(data=imputation5,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -371,7 +388,7 @@ save_results_imputation6 <- model_development(data=imputation6,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 
 ```
@@ -392,7 +409,7 @@ save_results_imputation7 <- model_development(data=imputation7,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 
 ```
@@ -413,7 +430,7 @@ save_results_imputation8 <- model_development(data=imputation8,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 
 ```
@@ -434,7 +451,7 @@ save_results_imputation9 <- model_development(data=imputation9,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -454,7 +471,7 @@ save_results_imputation10 <- model_development(data=imputation10,
                                   model_formula=model_formula, 
                                   approx_full_formula=approx_full_formula, 
                                   bootstraps=200, 
-                                  threshold=60,
+                                  threshold=70,
                                   seed=SEED)
 ```
 
@@ -573,7 +590,7 @@ writeData(imputation_results, sheet = "Boot model coefficients", x = boot_models
 writeData(imputation_results, sheet = "Boot-shrink coefficients", x = shrink_models)
 
 # Export the file
-saveWorkbook(imputation_results, here("Manuscript", "tables", "imputation_results.xlsx"), overwrite=TRUE)
+saveWorkbook(imputation_results, here("tables", "imputation_results.xlsx"), overwrite=TRUE)
 ```
 
 # External validation
