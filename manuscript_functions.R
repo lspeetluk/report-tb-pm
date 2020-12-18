@@ -766,6 +766,17 @@ model_development <- function(data, outcome, model_formula, approx_full_formula,
   # Coefficients from the model refit including only variables from the threshold of bootstrap %
   coef_boot_vars <- boot_model$coefficients
   
+  boot_est <- coef(boot_model)
+  boot_var <- diag(boot_model$var)
+  boot_se <- sqrt(boot_var)
+  
+  boot_coef_se <- as.data.frame(cbind(boot_est, boot_se)) %>% rownames_to_column("variable") %>% 
+    mutate(variable = gsub("[(]|[)]|=", "", variable))
+  
+  raw_table <- raw_table  %>% 
+    mutate(variable = gsub("[(]|[)]|=", "", variable)) %>% 
+    left_join(boot_coef_se, by="variable")
+  
   # Performance
   boot_val <- validate(boot_model, B=bootstraps, seed=seed)
   perf_boot_model <- save_val_results(boot_val)

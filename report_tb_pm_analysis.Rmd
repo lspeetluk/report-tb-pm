@@ -450,7 +450,7 @@ c_stat_ci(boot_model_50, data=mi_sum, samples=2000)
 save_val_results(boot_val_50)
 
 # Calibration plot
-plot(calibrate(boot_model_50, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+plot(calibrate(boot_model_50, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.1)
 ```
 
 
@@ -487,7 +487,7 @@ c_stat_ci(boot_model_60, data=mi_sum, samples=2000)
 save_val_results(boot_val_60)
 
 # Calibration plot
-plot(calibrate(boot_model_60, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+plot(calibrate(boot_model_60, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.1)
 ```
 
 
@@ -523,7 +523,7 @@ c_stat_ci(boot_model_70, data=mi_sum, samples=2000)
 save_val_results(boot_val_70)
 
 # Calibration plot
-plot(calibrate(boot_model_70, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+plot(calibrate(boot_model_70, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.1)
 ```
 
 80% threshold would be same as 70%
@@ -559,7 +559,7 @@ c_stat_ci(boot_model_90, data=mi_sum, samples=2000)
 save_val_results(boot_val_90)
 
 # Calibration plot
-plot(calibrate(boot_model_90, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+plot(calibrate(boot_model_90, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.1)
 ```
 
 
@@ -626,8 +626,8 @@ dev.off()
 
 ```{r}
 # Save calibration plot
-jpeg(here("images", "cal_plot_boot.jpeg"), width=450, height=450)
-plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome")
+jpeg(here("Manuscript", "images", "cal_plot_boot.jpeg"), width=500, height=500)
+plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.4)
 dev.off()
 
 
