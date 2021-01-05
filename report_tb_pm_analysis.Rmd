@@ -1308,11 +1308,20 @@ mi_sum2 <- mi_sum2 %>%
 
 mi_sum2 %>% 
   tbl_cross(nat2_cat, outcome_cat,
-            percent="row")
+            percent="row") 
 
 mi_sum2 %>% 
   tbl_cross(nat2_cat, unsuccessful,
             percent="col")
+
+mi_sum2 %>% 
+  tbl_cross(nat2_cat, hiv,
+            percent="col")
+
+mi_sum2 %>%
+  select(nat2_cat, hiv, unsuccessful, outcome_cat) %>%
+  tbl_summary(by="nat2_cat", type=list(c(hiv, unsuccessful, outcome_cat) ~ "categorical"), percent="row") %>% 
+  add_p()
 ```
 
 
@@ -1333,6 +1342,7 @@ add_nat2 <-  lrm(add_nat2_form, data=mi_sum2)
 # Added value function
 add_nat2_results <- added_value(base_model, add_nat2, y)
 ```
+
 
 
 Likelihood ratio test:
@@ -1356,7 +1366,18 @@ add_nat2_results$table
 ```
 
 
+```{r}
+add_nat2_form_int <- as.formula(paste0("unsuccessful ~", (paste(boot_vars, collapse = "+")), "+ nat2_cat + nat2_cat*hiv"))
+add_nat2_int <-  lrm(add_nat2_form_int, data=mi_sum2)
+add_nat2_int
 
+with(mi_sum2, table(nat2_cat, hiv, unsuccessful))
+
+# Added value of interaction
+lrtest(add_nat2_int, add_nat2)
+```
+
+No interaction between NAT2 and HIV
 
 ## HIV setup 
 
