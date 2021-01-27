@@ -65,6 +65,9 @@ load(file="/Users/Lauren/Box/RePORT Brazil/Datasets/Save/report_dissertation_lsp
 
 # Load functions
 source(here("manuscript_functions.R"))
+
+#source(here("Manuscript", "manuscript_functions.R"))
+#load("/Users/Lauren/Box/RePORT Brazil/Datasets/Save/tb_pm_analysis_files")
 ```
 
 
@@ -626,7 +629,7 @@ dev.off()
 
 ```{r}
 # Save calibration plot
-jpeg(here("Manuscript", "images", "cal_plot_boot.jpeg"), width=500, height=500)
+jpeg(here("images", "cal_plot_boot.jpeg"), width=500, height=500)
 plot(calibrate(boot_model, B=200), xlab="Predicted Probability of Unsuccessful Outcome", ylab="Actual Proability of Unsuccessful Outcome", cex.lab=1.4, cex.axis=1.4)
 dev.off()
 
@@ -933,7 +936,7 @@ approx_full_model <- ols(approx_full_formula, sigma=1, data=mi_sum)
 fastbw(approx_full_model, aics=10000) 
 ```
 
-We see that the variables through age can predict the full moel with an R2 of 0.986. 
+We see that the variables through age can predict the full model with an R2 of 0.986 (this is the same as the 70% model)
 
 
 The code below confirms how well the boot model approximates the predicted values from the full model. 
@@ -1136,12 +1139,12 @@ risk_groups
 
 ```{r, fig.height=10, fig.width=8}
 # Set data distribution
-dd <- datadist (mi_sum)
+dd <- datadist(mi_sum)
 options(datadist="dd")
 
 boot_model$coefficients
 
-boot_model <- Newlabels(boot_model, c("Hemoglobin (g/dL)", "HIV", "Drug use", "Diabetes", "Age group", "Education (years)", "Tobacco use"))
+boot_model <- Newlabels(boot_model, c("Hemoglobin (g/dL)", "HIV-positive", "Drug use", "Diabetes", "Age group", "Education (years)", "Tobacco use"))
 
 nom <- nomogram(boot_model, 
                 fun=plogis,
@@ -1691,6 +1694,54 @@ Added value table:
 
 ```{r}
 add_vl_results$table
+```
+
+
+# Decision curve analysis
+
+```{r}
+# Load package
+library(rmda)
+
+boot_model_dc <- decision_curve(boot_form_70, 
+                                data = mi_sum,
+                                thresholds = seq(0, .7, by = .05),
+                                study.design = "cohort",
+                                bootstraps = 200)
+
+jpeg(here("Manuscript", "images", "decision_curve.jpeg"), width=600, height=450)
+plot_decision_curve(boot_model_dc,
+                    curve.names = "Risk model",
+                    ylim = c(0, 1),
+                    legend.position = "topright", 
+                    cex = 0.2)
+
+dev.off()
+
+# The model is never worse than treating patients
+# Number of unnecessary interventions is calculated as [net benefit of the model - net benefit of treat all]/[p_t/(1-p_t)] *100
+
+# Calculates number of avoidable interventions of using prediction model vs. treat all 
+net_benefit <- boot_model_dc$derived.data %>% 
+  select(thresholds, NB, sNB, model) %>% 
+  mutate(model = ifelse(grepl("unsuccessful", model), "pred_model", model)) %>% 
+  arrange(thresholds) %>% 
+  pivot_wider(names_from = model,
+              id_cols = thresholds,
+              values_from = c("NB", "sNB")
+              ) %>% 
+  mutate(nb_dif = NB_pred_model - NB_All,
+         snb_dif = sNB_pred_model - sNB_All,
+         red_avoid_int = nb_dif/(thresholds/(1-thresholds))*100,
+         s_red_avoid_int = snb_dif/(thresholds/(1-thresholds))*100)
+
+# If we decide to treat only people with predicted outcome risk >0.2, this will have a net benefit (more true positives without expense of false negatives) over treat all of y-axis value
+# Alternatively, prediction model will have a net benefit over treat none at risk thresholds where model line > treat none line
+# Areas on the x-axis where the lower bound of the 95% CI is higher than the “treatment for all” line (i.e., threshold probability > 5%) offers a benefit over treating all individuals (improvement of false positives - specificity - without loss of true positives - sensitivity). 
+# Areas on the x-axis where the lower bound of the 95% CI does not cross 0 (threshold probability < 41%) illustrate settings in which use of the clinical risk score offers a  benefit compared to treating none (improvement of true positive - sensitivity - without increase in false positive)
+
+
+summary(boot_model_dc)
 ```
 
 
